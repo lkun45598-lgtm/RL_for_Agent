@@ -1,11 +1,10 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #10: rel L2 + gradient + FFT + divergence constraint
-    uo/vo 是海洋速度分量，近似满足不可压缩条件 div(u)=∂uo/∂x+∂vo/∂y≈0。
-    在 pred 上加散度惩罚，引导模型生成物理一致的速度场。
-    alpha=0.5, beta=0.25, gamma=0.15, delta=0.1 (divergence)
-@version 1.10.0
+@description Experiment #11: rel L2 + gradient + FFT + SSIM loss
+    Directly optimize SSIM (the eval metric) as a 4th loss term.
+    alpha=0.45, beta=0.3, gamma=0.15, eta=0.1 (SSIM)
+@version 1.11.0
 """
 
 import torch
@@ -55,40 +54,45 @@ def _fft_loss(pred, target):
     return amp_diff.mean().to(pred.dtype)
 
 
-def _divergence_loss(pred, mask=None):
+def _ssim_loss(pred, target, window_size=11):
     """
-    不可压缩流体散度约束：div(u) = ∂uo/∂x + ∂vo/∂y ≈ 0
-    pred: [B, H, W, C=2], channel 0=uo, channel 1=vo
-    用有限差分近似偏导数。
+    1 - SSIM, averaged over batch and channels.
+    pred/target: [B, H, W, C]
     """
     B, H, W, C = pred.shape
-    if C < 2:
-        return pred.new_zeros(1).squeeze()
+    p = pred.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    t = target.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
 
-    uo = pred[..., 0:1]  # [B, H, W, 1]
-    vo = pred[..., 1:2]  # [B, H, W, 1]
+    # Gaussian window
+    coords = torch.arange(window_size, dtype=pred.dtype, device=pred.device) - window_size // 2
+    g = torch.exp(-coords ** 2 / (2 * 1.5 ** 2))
+    g = g / g.sum()
+    kernel = g.unsqueeze(0) * g.unsqueeze(1)  # [ws, ws]
+    kernel = kernel.unsqueeze(0).unsqueeze(0)  # [1, 1, ws, ws]
 
-    # ∂uo/∂x: 沿 W 方向差分
-    duo_dx = uo[:, :, 1:, :] - uo[:, :, :-1, :]   # [B, H, W-1, 1]
-    # ∂vo/∂y: 沿 H 方向差分
-    dvo_dy = vo[:, 1:, :, :] - vo[:, :-1, :, :]   # [B, H-1, W, 1]
+    pad = window_size // 2
+    mu_p = F.conv2d(p, kernel, padding=pad)
+    mu_t = F.conv2d(t, kernel, padding=pad)
+    mu_p2 = mu_p * mu_p
+    mu_t2 = mu_t * mu_t
+    mu_pt = mu_p * mu_t
 
-    # 取公共区域 [B, H-1, W-1, 1]
-    div = duo_dx[:, :-1, :, :] + dvo_dy[:, :, :-1, :]
+    sigma_p2 = F.conv2d(p * p, kernel, padding=pad) - mu_p2
+    sigma_t2 = F.conv2d(t * t, kernel, padding=pad) - mu_t2
+    sigma_pt = F.conv2d(p * t, kernel, padding=pad) - mu_pt
 
-    if mask is not None:
-        # mask 对应公共区域
-        mask_crop = mask[:, :-1, :-1, :]  # [1, H-1, W-1, 1]
-        mask_f = mask_crop.expand_as(div).float()
-        n_valid = mask_f.sum().clamp(min=1.0)
-        return (div.abs() * mask_f).sum() / n_valid
-    return div.abs().mean()
+    C1 = 0.01 ** 2
+    C2 = 0.03 ** 2
+    ssim_map = ((2 * mu_pt + C1) * (2 * sigma_pt + C2)) / \
+               ((mu_p2 + mu_t2 + C1) * (sigma_p2 + sigma_t2 + C2))
+
+    return (1.0 - ssim_map.mean()).to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.25, gamma=0.15, delta=0.1, **kwargs):
+                 alpha=0.45, beta=0.3, gamma=0.15, eta=0.1, **kwargs):
     """
-    Relative L2 + Sobel gradient + FFT + divergence constraint.
+    Relative L2 + Sobel gradient + FFT + SSIM loss.
 
     Args:
         pred:   [B, H, W, C=2]  (uo, vo)
@@ -97,7 +101,7 @@ def sandbox_loss(pred, target, mask=None,
         alpha:  rel L2 weight
         beta:   gradient weight
         gamma:  FFT weight
-        delta:  divergence constraint weight
+        eta:    SSIM loss weight (1 - SSIM)
     """
     mask = _align_mask(mask, pred)
 
@@ -118,6 +122,6 @@ def sandbox_loss(pred, target, mask=None,
 
     loss_grad = _gradient_loss(pred, target, mask) * B
     loss_fft = _fft_loss(pred, target) * B
-    loss_div = _divergence_loss(pred, mask) * B
+    loss_ssim = _ssim_loss(pred, target) * B
 
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft + delta * loss_div
+    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft + eta * loss_ssim
