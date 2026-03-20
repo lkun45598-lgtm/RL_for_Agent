@@ -70,6 +70,7 @@ MODEL_TEMPLATES = {
         'in_channels': 2,
         'out_channels': 2,
         'init_features': 64,
+        'scale_factor': 4,  # must match data.sample_factor
     },
 }
 
