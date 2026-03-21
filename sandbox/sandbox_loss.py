@@ -1,11 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #66: multi-scale rel L2 + Laplacian + residual FFT
-    Replace Sobel gradient with Laplacian (2nd-order) loss.
-    Laplacian captures edges/structure differently from 1st-order gradient.
-    alpha=0.5 (rel L2), beta=0.3 (Laplacian), gamma=0.2 (residual FFT)
-    scale_weights=[0.5,0.3,0.2]
-@version 1.66.0
+@description Experiment #67: multi-scale rel L2 + gradient L2 + residual FFT
+    Same as exp#41 but gradient diff uses L2 (squared) instead of L1 (abs).
+    Hypothesis: L2 gradient penalizes large errors more strongly.
+    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
+@version 1.67.0
 """
 
 import torch
@@ -51,13 +50,17 @@ def _rel_l2(pred, target, mask=None):
     return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
 
 
-def _laplacian_loss(pred, target, mask=None):
+def _gradient_loss_l2(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    lap = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]],
-                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    diff = (F.conv2d(p, lap, padding=1) - F.conv2d(t, lap, padding=1)).abs()
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    # L2 on gradient differences instead of L1
+    diff = ((F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) ** 2 +
+            (F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)) ** 2)
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
@@ -80,12 +83,12 @@ def sandbox_loss(pred, target, mask=None,
     B = pred.size(0)
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
-    loss_lap = pred.new_zeros(1).squeeze()
+    loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_lap = loss_lap + sw * _laplacian_loss(ps, ts, ms) * B
+        loss_grad = loss_grad + sw * _gradient_loss_l2(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_rel + beta * loss_lap + gamma * loss_fft
+    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
