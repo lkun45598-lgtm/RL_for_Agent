@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #42: multi-scale rel L2 + gradient + residual FFT, gamma=0.25
-    Same as exp#41 (residual FFT) but increase gamma to 0.25, reduce alpha to 0.45.
-    alpha=0.45, beta=0.3, gamma=0.25, scale_weights=[0.5,0.3,0.2]
-    Test if stronger residual FFT signal helps further.
-@version 1.42.0
+@description Experiment #43: multi-scale rel L2 + gradient + residual FFT, more gradient
+    Same as exp#41 (residual FFT) but increase beta to 0.35, alpha=0.45, gamma=0.2.
+    alpha=0.45, beta=0.35, gamma=0.2, scale_weights=[0.5,0.3,0.2]
+    Test if stronger gradient signal helps with residual FFT.
+@version 1.43.0
 """
 
 import torch
@@ -74,7 +74,7 @@ def _fft_loss(pred, target):
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.45, beta=0.3, gamma=0.25,
+                 alpha=0.45, beta=0.35, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
