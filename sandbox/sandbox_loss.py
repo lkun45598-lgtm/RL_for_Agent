@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #11: rel L2 + gradient + FFT + SSIM loss
-    Directly optimize SSIM (the eval metric) as a 4th loss term.
-    alpha=0.45, beta=0.3, gamma=0.15, eta=0.1 (SSIM)
-@version 1.11.0
+@description Experiment #12: rel L2 + gradient + FFT, fine-tune weights
+    Based on exp#7 best (alpha=0.5 beta=0.3 gamma=0.2).
+    Probe alpha=0.45, beta=0.35, gamma=0.2 — shift weight toward gradient.
+@version 1.12.0
 """
 
 import torch
@@ -54,54 +54,19 @@ def _fft_loss(pred, target):
     return amp_diff.mean().to(pred.dtype)
 
 
-def _ssim_loss(pred, target, window_size=11):
-    """
-    1 - SSIM, averaged over batch and channels.
-    pred/target: [B, H, W, C]
-    """
-    B, H, W, C = pred.shape
-    p = pred.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    t = target.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-
-    # Gaussian window
-    coords = torch.arange(window_size, dtype=pred.dtype, device=pred.device) - window_size // 2
-    g = torch.exp(-coords ** 2 / (2 * 1.5 ** 2))
-    g = g / g.sum()
-    kernel = g.unsqueeze(0) * g.unsqueeze(1)  # [ws, ws]
-    kernel = kernel.unsqueeze(0).unsqueeze(0)  # [1, 1, ws, ws]
-
-    pad = window_size // 2
-    mu_p = F.conv2d(p, kernel, padding=pad)
-    mu_t = F.conv2d(t, kernel, padding=pad)
-    mu_p2 = mu_p * mu_p
-    mu_t2 = mu_t * mu_t
-    mu_pt = mu_p * mu_t
-
-    sigma_p2 = F.conv2d(p * p, kernel, padding=pad) - mu_p2
-    sigma_t2 = F.conv2d(t * t, kernel, padding=pad) - mu_t2
-    sigma_pt = F.conv2d(p * t, kernel, padding=pad) - mu_pt
-
-    C1 = 0.01 ** 2
-    C2 = 0.03 ** 2
-    ssim_map = ((2 * mu_pt + C1) * (2 * sigma_pt + C2)) / \
-               ((mu_p2 + mu_t2 + C1) * (sigma_p2 + sigma_t2 + C2))
-
-    return (1.0 - ssim_map.mean()).to(pred.dtype)
-
-
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.45, beta=0.3, gamma=0.15, eta=0.1, **kwargs):
+                 alpha=0.45, beta=0.35, gamma=0.2, **kwargs):
     """
-    Relative L2 + Sobel gradient + FFT + SSIM loss.
+    Relative L2 + Sobel gradient + FFT.
+    Fine-tuned weights: alpha=0.45, beta=0.35, gamma=0.2.
 
     Args:
-        pred:   [B, H, W, C=2]  (uo, vo)
-        target: [B, H, W, C=2]
+        pred:   [B, H, W, C]
+        target: [B, H, W, C]
         mask:   [1, H_m, W_m, 1] bool
         alpha:  rel L2 weight
         beta:   gradient weight
         gamma:  FFT weight
-        eta:    SSIM loss weight (1 - SSIM)
     """
     mask = _align_mask(mask, pred)
 
@@ -122,6 +87,5 @@ def sandbox_loss(pred, target, mask=None,
 
     loss_grad = _gradient_loss(pred, target, mask) * B
     loss_fft = _fft_loss(pred, target) * B
-    loss_ssim = _ssim_loss(pred, target) * B
 
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft + eta * loss_ssim
+    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
