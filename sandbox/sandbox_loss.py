@@ -1,11 +1,12 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #23: multi-scale rel L2 + gradient + FFT
-    Fine-tune from exp#13: alpha=0.5, beta=0.25, gamma=0.25
-    Equal weight on gradient and FFT.
+@description Experiment #24: multi-scale rel L2 + Huber gradient + FFT
+    Replace MAE gradient loss with Huber loss (smooth L1).
+    More robust to outlier gradient values in ocean current boundaries.
+    alpha=0.5, beta=0.3 (Huber gradient), gamma=0.2
     scale_weights=[0.5, 0.3, 0.2]
-@version 1.23.0
+@version 1.24.0
 """
 
 import torch
@@ -56,7 +57,7 @@ def _rel_l2(pred, target, mask=None):
     return (diff_norms / y_norms).sum()
 
 
-def _gradient_loss(pred, target, mask=None):
+def _gradient_loss_huber(pred, target, mask=None, delta=0.1):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
@@ -68,8 +69,12 @@ def _gradient_loss(pred, target, mask=None):
     gy_p = F.conv2d(p, sobel_y, padding=1)
     gx_t = F.conv2d(t, sobel_x, padding=1)
     gy_t = F.conv2d(t, sobel_y, padding=1)
-    diff = (torch.abs(gx_p - gx_t) + torch.abs(gy_p - gy_t))
-    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
+    diff_x = gx_p - gx_t
+    diff_y = gy_p - gy_t
+    # Huber loss: smooth L1
+    huber_x = F.huber_loss(gx_p, gx_t, reduction="none", delta=delta)
+    huber_y = F.huber_loss(gy_p, gy_t, reduction="none", delta=delta)
+    diff = (huber_x + huber_y).reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mask_f = mask.expand_as(diff).float()
         n_valid = mask_f.sum().clamp(min=1.0)
@@ -87,7 +92,7 @@ def _fft_loss(pred, target):
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.25, gamma=0.25,
+                 alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
@@ -104,7 +109,7 @@ def sandbox_loss(pred, target, mask=None,
         t_s = _downsample(target, s)
         m_s = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(p_s, t_s, m_s)
-        loss_grad = loss_grad + sw * _gradient_loss(p_s, t_s, m_s) * B
+        loss_grad = loss_grad + sw * _gradient_loss_huber(p_s, t_s, m_s) * B
 
     loss_fft = _fft_loss(pred, target) * B
 
