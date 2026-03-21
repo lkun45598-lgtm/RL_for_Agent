@@ -1,11 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #49: multi-scale rel L2 + gradient + AC-only residual FFT
-    Same as exp#41 base (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    but zero out DC component of residual FFT before taking mean.
-    DC=[0,0] represents mean error, already captured by rel_l2.
-    Focusing FFT loss on AC (texture/high-freq) components only.
-@version 1.49.0
+@description Experiment #50: multi-scale rel L2 + gradient + gradient-residual FFT
+    Same base as exp#41 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
+    FFT computed on Sobel gradient magnitude of residual:
+    fft_loss = rfft2(|grad(pred-target)|).abs().mean()
+    This captures spatial frequency of edge errors, not just pixel errors.
+@version 1.50.0
 """
 
 import torch
@@ -69,12 +69,16 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
-    """Residual FFT with DC zeroed out — focuses on AC (texture) frequencies only."""
-    residual = (pred - target).float().permute(0, 3, 1, 2)
-    fft_r = torch.fft.rfft2(residual, norm='ortho')
-    # zero DC component [batch, channel, 0, 0]
-    fft_r = fft_r.clone()
-    fft_r[:, :, 0, 0] = 0
+    """FFT of gradient magnitude of residual."""
+    B, H, W, C = pred.shape
+    r = (pred - target).float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                      dtype=torch.float32, device=pred.device).view(1, 1, 3, 3)
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                      dtype=torch.float32, device=pred.device).view(1, 1, 3, 3)
+    grad_mag = (F.conv2d(r, sx, padding=1).abs() + F.conv2d(r, sy, padding=1).abs())
+    grad_mag = grad_mag.reshape(B, C, H, W)
+    fft_r = torch.fft.rfft2(grad_mag, norm='ortho')
     return fft_r.abs().mean().to(pred.dtype)
 
 
