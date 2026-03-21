@@ -1,11 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #41: multi-scale rel L2 + gradient + residual FFT
-    Same as exp#13 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    but FFT computed on the residual (pred - target) directly:
-    fft_loss = mean(|rfft2(pred - target)|)
-    This directly measures spectral energy of the error.
-@version 1.41.0
+@description Experiment #42: multi-scale rel L2 + gradient + residual FFT, gamma=0.25
+    Same as exp#41 (residual FFT) but increase gamma to 0.25, reduce alpha to 0.45.
+    alpha=0.45, beta=0.3, gamma=0.25, scale_weights=[0.5,0.3,0.2]
+    Test if stronger residual FFT signal helps further.
+@version 1.42.0
 """
 
 import torch
@@ -69,14 +68,13 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
-    """FFT of residual: spectral energy of the error signal."""
     residual = (pred - target).float().permute(0, 3, 1, 2)
     fft_r = torch.fft.rfft2(residual, norm='ortho')
     return fft_r.abs().mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.45, beta=0.3, gamma=0.25,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]

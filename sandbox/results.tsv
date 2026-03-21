@@ -41,3 +41,4 @@ da43a95	0.6156	16.54	discard	exp#37: 4-scale rel L2 + gradient + FFT, scales=[1,
 1a51968	0.6395	16.97	discard	exp#38: multi-scale rel L2 + 5x5 gradient + FFT (SwinIR=0.6395 EDSR=0.6680 FNO2d=0.4067 UNet2d=0.5351)
 689daf4	0.6604	17.29	discard	exp#39: multi-scale rel L2 + gradient L2 (squared) + FFT (SwinIR=0.6604 EDSR=0.6745 FNO2d=0.4425 UNet2d=0.5469)
 0269980	0.6349	16.97	discard	exp#40: multi-scale rel L2 + gradient + tiny Laplacian (delta=0.02) + FFT (SwinIR=0.6349 EDSR=0.6810 FNO2d=0.4434 UNet2d=0.5623)
+f682743	0.6645	17.11	keep	exp#41: multi-scale rel L2 + gradient + residual FFT (SwinIR=0.6645 EDSR=0.6815 FNO2d=0.4344 UNet2d=0.5786) ★ NEW BEST
