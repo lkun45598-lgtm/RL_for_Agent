@@ -1,10 +1,12 @@
 """
 @file sandbox_loss.py
-@description Experiment #54: multi-scale Charbonnier + gradient + residual FFT
-    Replace rel L2 with relative Charbonnier (smooth L1): sqrt(diff^2 + eps^2) / ||target||_2.
-    Charbonnier is more robust to outliers. Keep gradient (beta=0.3) and residual FFT (gamma=0.2).
-    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2], eps=1e-3
-@version 1.54.0
+@description Experiment #55: multi-scale rel L1 + gradient + residual FFT
+    Replace rel L2 with rel L1 (normalized MAE) for robustness to outliers.
+    rel_l1 = sum(|pred - target|) / sum(|target|).clamp(min=1e-8)
+    Keep same gradient + residual FFT as exp#41.
+    alpha=0.5 (rel L1), beta=0.3 (gradient), gamma=0.2 (residual FFT)
+    scale_weights=[0.5,0.3,0.2]
+@version 1.55.0
 """
 
 import torch
@@ -40,20 +42,14 @@ def _downsample_mask(mask, scale):
     return (m > 0.5).permute(0, 2, 3, 1)
 
 
-def _rel_charbonnier(pred, target, mask=None, eps=1e-3):
-    """Charbonnier loss normalized by target L2 norm."""
+def _rel_l1(pred, target, mask=None):
     B = pred.size(0)
-    diff = pred - target
-    if mask is not None:
-        mf = mask.expand_as(pred).float()
-        diff = diff * mf
-        target_m = target * mf
-    else:
-        target_m = target
-    # Charbonnier: sqrt(diff^2 + eps^2) summed over spatial dims
-    charb = torch.sqrt(diff ** 2 + eps ** 2).reshape(B, -1).sum(dim=1)
-    target_norm = torch.norm(target_m.reshape(B, -1), 2, dim=1).clamp(min=1e-8)
-    return (charb / target_norm).sum()
+    pf = pred.reshape(B, -1)
+    tf = target.reshape(B, -1)
+    mf = mask.expand_as(pred).reshape(B, -1).float() if mask is not None else torch.ones_like(pf)
+    diff = (pf - tf).abs() * mf
+    ym = tf.abs() * mf
+    return (diff.sum(dim=1) / ym.sum(dim=1).clamp(min=1e-8)).sum()
 
 
 def _gradient_loss(pred, target, mask=None):
@@ -88,13 +84,13 @@ def sandbox_loss(pred, target, mask=None,
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = [1, 2, 4]
-    loss_charb = pred.new_zeros(1).squeeze()
+    loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
-        loss_charb = loss_charb + sw * _rel_charbonnier(ps, ts, ms)
+        loss_rel = loss_rel + sw * _rel_l1(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_charb + beta * loss_grad + gamma * loss_fft
+    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
