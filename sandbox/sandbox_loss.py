@@ -1,10 +1,9 @@
 """
 @file sandbox_loss.py
-@description Experiment #62: multi-scale rel L2 + gradient + residual FFT, bilinear downsampling
-    Same as exp#41 but use bilinear interpolation instead of avg_pool2d for downsampling.
-    Hypothesis: bilinear gives smoother multi-scale representations.
-    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.62.0
+@description Experiment #63: rel L2 + gradient + residual FFT, alpha=0.5 beta=0.35 gamma=0.15
+    Fine-tune weights around exp#41 best. Increase gradient weight, reduce FFT weight.
+    alpha=0.5, beta=0.35, gamma=0.15, scale_weights=[0.5,0.3,0.2]
+@version 1.63.0
 """
 
 import torch
@@ -28,7 +27,7 @@ def _downsample(x, scale):
         return x
     B, H, W, C = x.shape
     t = x.permute(0, 3, 1, 2)
-    t = F.interpolate(t, size=(H // scale, W // scale), mode='bilinear', align_corners=False)
+    t = F.avg_pool2d(t, kernel_size=scale, stride=scale)
     return t.permute(0, 2, 3, 1)
 
 
@@ -75,7 +74,7 @@ def _fft_loss(pred, target):
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.5, beta=0.35, gamma=0.15,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
