@@ -1,12 +1,12 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #17: multi-scale rel L2 + gradient + FFT, scale_weights=[0.6,0.3,0.1]
-    Based on exp#13 (best SwinIR/EDSR). Reduce coarse scale weight to
-    mitigate FNO2d regression while keeping multi-scale benefit.
+@description Experiment #18: 2-scale rel L2 + gradient + FFT
+    Reduce to 2 scales (1, 2) with weights [0.7, 0.3] — remove scale-4
+    which hurt FNO2d. Tests whether scale-4 is responsible for FNO2d regression.
     alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (FFT)
-    scale_weights=[0.6, 0.3, 0.1]
-@version 1.17.0
+    scale_weights=[0.7, 0.3] for scales [1, 1/2]
+@version 1.18.0
 """
 
 import torch
@@ -92,16 +92,16 @@ def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     """
-    Multi-scale Relative L2 + Sobel gradient + FFT.
-    scale_weights=[0.6, 0.3, 0.1] — less coarse scale emphasis.
+    2-scale Relative L2 + Sobel gradient + FFT.
+    Scales: [1, 2], weights: [0.7, 0.3].
     """
     if scale_weights is None:
-        scale_weights = [0.6, 0.3, 0.1]
+        scale_weights = [0.7, 0.3]
 
     mask = _align_mask(mask, pred)
     B = pred.size(0)
 
-    scales = [1, 2, 4]
+    scales = [1, 2]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
 
