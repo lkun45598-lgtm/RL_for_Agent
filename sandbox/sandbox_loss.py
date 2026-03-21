@@ -1,10 +1,9 @@
 """
 @file sandbox_loss.py
-@description Experiment #27: multi-scale rel L2 + gradient + normalized FFT
-    Normalize pred/target per-channel before FFT (zero-mean unit-var)
-    to make FFT loss scale-invariant.
-    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.27.0
+@description Experiment #28: multi-scale rel L2 + gradient + FFT, alpha=0.4 beta=0.4 gamma=0.2
+    Shift weight from rel_l2 to gradient vs exp#13.
+    scale_weights=[0.5, 0.3, 0.2]
+@version 1.28.0
 """
 
 import torch
@@ -40,10 +39,7 @@ def _rel_l2(pred, target, mask=None):
     B = pred.size(0)
     pf = pred.reshape(B,-1)
     tf = target.reshape(B,-1)
-    if mask is not None:
-        mf = mask.expand_as(pred).reshape(B,-1).float()
-    else:
-        mf = torch.ones_like(pf)
+    mf = mask.expand_as(pred).reshape(B,-1).float() if mask is not None else torch.ones_like(pf)
     diff = (pf - tf) * mf
     ym = tf * mf
     return (torch.norm(diff,2,dim=1) / torch.norm(ym,2,dim=1).clamp(min=1e-8)).sum()
@@ -62,22 +58,15 @@ def _gradient_loss(pred, target, mask=None):
         return (diff*mf).sum() / mf.sum().clamp(min=1.0)
     return diff.mean()
 
-def _fft_loss_normalized(pred, target):
-    p = pred.float().permute(0,3,1,2)  # [B,C,H,W]
+def _fft_loss(pred, target):
+    p = pred.float().permute(0,3,1,2)
     t = target.float().permute(0,3,1,2)
-    # Per-channel instance norm
-    p_mean = p.mean(dim=(-2,-1), keepdim=True)
-    p_std = p.std(dim=(-2,-1), keepdim=True).clamp(min=1e-8)
-    t_mean = t.mean(dim=(-2,-1), keepdim=True)
-    t_std = t.std(dim=(-2,-1), keepdim=True).clamp(min=1e-8)
-    p_norm = (p - p_mean) / p_std
-    t_norm = (t - t_mean) / t_std
-    fft_p = torch.fft.rfft2(p_norm, norm="ortho")
-    fft_t = torch.fft.rfft2(t_norm, norm="ortho")
+    fft_p = torch.fft.rfft2(p, norm="ortho")
+    fft_t = torch.fft.rfft2(t, norm="ortho")
     return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.4, beta=0.4, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
@@ -92,5 +81,5 @@ def sandbox_loss(pred, target, mask=None,
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
-    loss_fft = _fft_loss_normalized(pred, target) * B
+    loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
