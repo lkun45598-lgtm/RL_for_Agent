@@ -1,13 +1,12 @@
 """
 @file sandbox_loss.py
-@description Experiment #57: multi-scale rel L2 + relative gradient + residual FFT
-    Replace absolute gradient loss with relative gradient loss:
-    rel_grad = |grad(pred) - grad(target)| / (|grad(target)| + eps)
-    This normalizes gradient errors by target gradient magnitude,
-    making it scale-invariant like the rel L2 term.
-    alpha=0.5 (rel L2), beta=0.3 (rel gradient), gamma=0.2 (residual FFT)
+@description Experiment #58: multi-scale rel L2 + SSIM + residual FFT
+    Replace gradient loss (exp#41) with SSIM loss.
+    SSIM captures structural similarity better than Sobel gradients.
+    ssim_loss = 1 - SSIM(pred, target) per channel, averaged.
+    alpha=0.5 (rel L2), beta=0.3 (SSIM), gamma=0.2 (residual FFT)
     scale_weights=[0.5,0.3,0.2]
-@version 1.57.0
+@version 1.58.0
 """
 
 import torch
@@ -53,27 +52,33 @@ def _rel_l2(pred, target, mask=None):
     return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
 
 
-def _rel_gradient_loss(pred, target, mask=None):
-    """Relative gradient loss: normalize by target gradient magnitude."""
+def _ssim_loss(pred, target, window_size=7):
+    """1 - SSIM, computed per channel then averaged."""
     B, H, W, C = pred.shape
-    p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    gp_x = F.conv2d(p, sx, padding=1)
-    gp_y = F.conv2d(p, sy, padding=1)
-    gt_x = F.conv2d(t, sx, padding=1)
-    gt_y = F.conv2d(t, sy, padding=1)
-    diff = torch.abs(gp_x - gt_x) + torch.abs(gp_y - gt_y)
-    tgt_mag = (gt_x.abs() + gt_y.abs()).clamp(min=1e-6)
-    rel_diff = diff / tgt_mag
-    rel_diff = rel_diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
-    if mask is not None:
-        mf = mask.expand_as(rel_diff).float()
-        return (rel_diff * mf).sum() / mf.sum().clamp(min=1.0) * B
-    return rel_diff.mean() * B
+    p = pred.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    t = target.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+
+    # Gaussian window
+    coords = torch.arange(window_size, dtype=p.dtype, device=p.device) - window_size // 2
+    g = torch.exp(-coords ** 2 / (2 * 1.5 ** 2))
+    g = g / g.sum()
+    window = g.unsqueeze(0) * g.unsqueeze(1)
+    window = window.unsqueeze(0).unsqueeze(0)  # 1,1,k,k
+
+    pad = window_size // 2
+    mu_p = F.conv2d(p, window, padding=pad)
+    mu_t = F.conv2d(t, window, padding=pad)
+    mu_p2 = mu_p ** 2
+    mu_t2 = mu_t ** 2
+    mu_pt = mu_p * mu_t
+    sigma_p2 = F.conv2d(p * p, window, padding=pad) - mu_p2
+    sigma_t2 = F.conv2d(t * t, window, padding=pad) - mu_t2
+    sigma_pt = F.conv2d(p * t, window, padding=pad) - mu_pt
+
+    C1, C2 = 0.01 ** 2, 0.03 ** 2
+    ssim_map = ((2 * mu_pt + C1) * (2 * sigma_pt + C2)) / (
+        (mu_p2 + mu_t2 + C1) * (sigma_p2 + sigma_t2 + C2))
+    return (1.0 - ssim_map.mean()).to(pred.dtype)
 
 
 def _fft_loss(pred, target):
@@ -92,12 +97,12 @@ def sandbox_loss(pred, target, mask=None,
     B = pred.size(0)
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
-    loss_grad = pred.new_zeros(1).squeeze()
+    loss_ssim = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + sw * _rel_gradient_loss(ps, ts, ms)
+        loss_ssim = loss_ssim + sw * _ssim_loss(ps, ts) * B
     loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
+    return alpha * loss_rel + beta * loss_ssim + gamma * loss_fft
