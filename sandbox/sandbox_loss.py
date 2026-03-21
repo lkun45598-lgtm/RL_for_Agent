@@ -1,11 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #53: multi-scale rel L2 + gradient + power-spectrum residual FFT
-    Based on exp#41 (best). Replace abs().mean() with abs().pow(2).mean() in residual FFT.
-    Power spectrum emphasizes larger spectral errors more strongly than L1 amplitude.
-    alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (residual FFT power)
-    scale_weights=[0.5,0.3,0.2]
-@version 1.53.0
+@description Experiment #54: multi-scale Charbonnier + gradient + residual FFT
+    Replace rel L2 with relative Charbonnier (smooth L1): sqrt(diff^2 + eps^2) / ||target||_2.
+    Charbonnier is more robust to outliers. Keep gradient (beta=0.3) and residual FFT (gamma=0.2).
+    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2], eps=1e-3
+@version 1.54.0
 """
 
 import torch
@@ -41,42 +40,44 @@ def _downsample_mask(mask, scale):
     return (m > 0.5).permute(0, 2, 3, 1)
 
 
-def _rel_l2(pred, target, mask=None):
+def _rel_charbonnier(pred, target, mask=None, eps=1e-3):
+    """Charbonnier loss normalized by target L2 norm."""
     B = pred.size(0)
-    pf = pred.reshape(B, -1)
-    tf = target.reshape(B, -1)
-    mf = mask.expand_as(pred).reshape(B, -1).float() if mask is not None else torch.ones_like(pf)
-    diff = (pf - tf) * mf
-    ym = tf * mf
-    return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
+    diff = pred - target
+    if mask is not None:
+        mf = mask.expand_as(pred).float()
+        diff = diff * mf
+        target_m = target * mf
+    else:
+        target_m = target
+    # Charbonnier: sqrt(diff^2 + eps^2) summed over spatial dims
+    charb = torch.sqrt(diff ** 2 + eps ** 2).reshape(B, -1).sum(dim=1)
+    target_norm = torch.norm(target_m.reshape(B, -1), 2, dim=1).clamp(min=1e-8)
+    return (charb / target_norm).sum()
 
 
 def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                            dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                            dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    gx_p = F.conv2d(p, sobel_x, padding=1)
-    gy_p = F.conv2d(p, sobel_y, padding=1)
-    gx_t = F.conv2d(t, sobel_x, padding=1)
-    gy_t = F.conv2d(t, sobel_y, padding=1)
-    diff_x = torch.abs(gx_p - gx_t)
-    diff_y = torch.abs(gy_p - gy_t)
-    grad_diff = (diff_x + diff_y).reshape(B, C, H, W).permute(0, 2, 3, 1)
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
+            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
+    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
-        mask_f = mask.expand_as(grad_diff).float()
-        n_valid = mask_f.sum().clamp(min=1.0)
-        return (grad_diff * mask_f).sum() / n_valid
-    return grad_diff.mean()
+        mf = mask.expand_as(diff).float()
+        return (diff * mf).sum() / mf.sum().clamp(min=1.0)
+    return diff.mean()
 
 
 def _fft_loss(pred, target):
+    """FFT of residual: spectral energy of the error signal."""
     residual = (pred - target).float().permute(0, 3, 1, 2)
     fft_r = torch.fft.rfft2(residual, norm='ortho')
-    return fft_r.abs().pow(2).mean().to(pred.dtype)
+    return fft_r.abs().mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
@@ -87,13 +88,13 @@ def sandbox_loss(pred, target, mask=None,
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = [1, 2, 4]
-    loss_rel = pred.new_zeros(1).squeeze()
+    loss_charb = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
-        loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
+        loss_charb = loss_charb + sw * _rel_charbonnier(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
+    return alpha * loss_charb + beta * loss_grad + gamma * loss_fft

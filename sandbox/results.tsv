@@ -53,3 +53,4 @@ e2d326a	0.6629	17.11	discard	exp#44: multi-scale rel L2 + gradient + multi-scale
 4703d01	0.5992	17.11	discard	exp#50: gradient-residual FFT (SwinIR=0.5992 EDSR=0.6573 FNO2d=0.4327 UNet2d=0.5631)
 7b84f8e	0.6602	17.11	discard	exp#51: log1p residual FFT (SwinIR=0.6602 EDSR=0.6818 FNO2d=0.4357 UNet2d=0.5633)
 fb49769	0.5626	17.11	discard	exp#52: multi-scale rel L2 + residual FFT (no gradient) (SwinIR=0.5626 EDSR=0.6719 FNO2d=0.4589 UNet2d=0.5612)
+bed3db9	0.6458	17.85	discard	exp#53: power-spectrum residual FFT (SwinIR=0.6458 EDSR=0.6844 FNO2d=1.0138 UNet2d=1.2428) FNO2d/UNet2d blew up
