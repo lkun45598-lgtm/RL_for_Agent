@@ -1,12 +1,9 @@
 """
 @file sandbox_loss.py
-@description Experiment #59: multi-scale rel L2 + gradient + residual FFT + divergence regularizer
-    Based on exp#41, add a divergence regularization term for the 2-channel (uo, vo) flow field.
-    Ocean currents are approximately incompressible: div(v) = dvo/dx + dvo/dy ≈ 0.
-    Penalizes predicted field for violating incompressibility.
-    alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (residual FFT), delta=0.05 (divergence)
-    scale_weights=[0.5,0.3,0.2]
-@version 1.59.0
+@description Experiment #60: multi-scale rel L2 + gradient + residual FFT, 4 scales [1,2,4,8]
+    Add scale=8 to exp#41. scale_weights=[0.4,0.3,0.2,0.1]
+    alpha=0.5, beta=0.3, gamma=0.2
+@version 1.60.0
 """
 
 import torch
@@ -76,39 +73,14 @@ def _fft_loss(pred, target):
     return fft_r.abs().mean().to(pred.dtype)
 
 
-def _divergence_loss(pred, mask=None):
-    """Incompressibility constraint: div(uo, vo) = dvo/dx + dvo/dy ≈ 0.
-    pred: [B, H, W, 2] where channel 0=uo, channel 1=vo
-    """
-    B, H, W, C = pred.shape
-    if C < 2:
-        return pred.new_zeros(1).squeeze()
-    # uo = pred[..., 0], vo = pred[..., 1]
-    uo = pred[..., 0:1].permute(0, 3, 1, 2)  # [B, 1, H, W]
-    vo = pred[..., 1:2].permute(0, 3, 1, 2)  # [B, 1, H, W]
-    # x-derivative of uo, y-derivative of vo
-    dx = torch.tensor([[0, 0, 0], [-1, 0, 1], [0, 0, 0]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3) * 0.5
-    dy = torch.tensor([[0, -1, 0], [0, 0, 0], [0, 1, 0]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3) * 0.5
-    duo_dx = F.conv2d(uo, dx, padding=1)
-    dvo_dy = F.conv2d(vo, dy, padding=1)
-    div = duo_dx + dvo_dy  # [B, 1, H, W]
-    if mask is not None:
-        # mask: [1, H, W, 1] or [B, H, W, 1]
-        m = mask[..., 0:1].permute(0, 3, 1, 2).float().expand_as(div)
-        return (div.abs() * m).sum() / m.sum().clamp(min=1.0)
-    return div.abs().mean()
-
-
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2, delta=0.05,
+                 alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
-        scale_weights = [0.5, 0.3, 0.2]
+        scale_weights = [0.4, 0.3, 0.2, 0.1]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
-    scales = [1, 2, 4]
+    scales = [1, 2, 4, 8]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
@@ -118,5 +90,4 @@ def sandbox_loss(pred, target, mask=None,
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    loss_div = _divergence_loss(pred, mask) * B
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft + delta * loss_div
+    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
