@@ -1,10 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #65: rel L2 + gradient + residual FFT + vorticity loss (delta=0.02)
-    Reduce vorticity weight from 0.05 (exp#64) to 0.02.
-    alpha=0.5, beta=0.3, gamma=0.2, delta=0.02
+@description Experiment #66: multi-scale rel L2 + Laplacian + residual FFT
+    Replace Sobel gradient with Laplacian (2nd-order) loss.
+    Laplacian captures edges/structure differently from 1st-order gradient.
+    alpha=0.5 (rel L2), beta=0.3 (Laplacian), gamma=0.2 (residual FFT)
     scale_weights=[0.5,0.3,0.2]
-@version 1.65.0
+@version 1.66.0
 """
 
 import torch
@@ -50,16 +51,13 @@ def _rel_l2(pred, target, mask=None):
     return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
 
 
-def _gradient_loss(pred, target, mask=None):
+def _laplacian_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
-            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
+    lap = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]],
+                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    diff = (F.conv2d(p, lap, padding=1) - F.conv2d(t, lap, padding=1)).abs()
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
@@ -73,27 +71,8 @@ def _fft_loss(pred, target):
     return fft_r.abs().mean().to(pred.dtype)
 
 
-def _vorticity_loss(pred, target, mask=None):
-    B, H, W, C = pred.shape
-    uo_p = pred[..., 0:1].permute(0, 3, 1, 2)
-    vo_p = pred[..., 1:2].permute(0, 3, 1, 2)
-    uo_t = target[..., 0:1].permute(0, 3, 1, 2)
-    vo_t = target[..., 1:2].permute(0, 3, 1, 2)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    curl_p = F.conv2d(vo_p, sx, padding=1) - F.conv2d(uo_p, sy, padding=1)
-    curl_t = F.conv2d(vo_t, sx, padding=1) - F.conv2d(uo_t, sy, padding=1)
-    diff = (curl_p - curl_t).abs().squeeze(1)
-    if mask is not None:
-        mf = mask[..., 0].float()
-        return (diff * mf).sum() / mf.sum().clamp(min=1.0)
-    return diff.mean()
-
-
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2, delta=0.02,
+                 alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
@@ -101,13 +80,12 @@ def sandbox_loss(pred, target, mask=None,
     B = pred.size(0)
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
-    loss_grad = pred.new_zeros(1).squeeze()
+    loss_lap = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
+        loss_lap = loss_lap + sw * _laplacian_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    loss_vort = _vorticity_loss(pred, target, mask) * B
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft + delta * loss_vort
+    return alpha * loss_rel + beta * loss_lap + gamma * loss_fft
