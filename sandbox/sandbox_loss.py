@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #34: multi-scale rel L2 + gradient + FFT
-    Same structure as exp#13 (scale_weights=[0.5,0.3,0.2])
-    Adjusted weights: alpha=0.55 (rel L2), beta=0.3 (gradient), gamma=0.15 (FFT)
-    Tests slightly more pixel-level fidelity emphasis.
-@version 1.34.0
+@description Experiment #35: multi-scale rel L2 + gradient + low-freq weighted FFT
+    Same as exp#13 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
+    FFT loss weighted by 1/(1+r) where r is normalized radial frequency,
+    emphasizing large-scale (low-frequency) spectral accuracy.
+@version 1.35.0
 """
 
 import torch
@@ -68,15 +68,25 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
+    """FFT amplitude loss weighted by 1/(1+r), emphasizing low frequencies."""
     p = pred.float().permute(0, 3, 1, 2)
     t = target.float().permute(0, 3, 1, 2)
+    B, C, H, W = p.shape
+    Wh = W // 2 + 1
     fft_p = torch.fft.rfft2(p, norm='ortho')
     fft_t = torch.fft.rfft2(t, norm='ortho')
-    return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
+    # Build frequency weight grid: 1/(1+normalized_radius)
+    fy = torch.fft.fftfreq(H, device=pred.device).unsqueeze(1)  # [H, 1]
+    fx = torch.fft.rfftfreq(W, device=pred.device).unsqueeze(0)  # [1, Wh]
+    r = torch.sqrt(fy ** 2 + fx ** 2)  # [H, Wh], range [0, ~0.7]
+    weight = 1.0 / (1.0 + r * 10)  # normalize so DC=1, Nyquist~0.12
+    weight = weight.unsqueeze(0).unsqueeze(0)  # [1, 1, H, Wh]
+    amp_diff = torch.abs(fft_p.abs() - fft_t.abs())
+    return (amp_diff * weight).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.55, beta=0.3, gamma=0.15,
+                 alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
