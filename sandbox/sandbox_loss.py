@@ -1,10 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #48: multi-scale rel L2 + gradient + masked residual FFT
+@description Experiment #49: multi-scale rel L2 + gradient + AC-only residual FFT
     Same as exp#41 base (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    but apply mask to residual before FFT: rfft2(mask * (pred - target)).abs().mean()
-    Focuses frequency-domain error on valid ocean pixels only.
-@version 1.48.0
+    but zero out DC component of residual FFT before taking mean.
+    DC=[0,0] represents mean error, already captured by rel_l2.
+    Focusing FFT loss on AC (texture/high-freq) components only.
+@version 1.49.0
 """
 
 import torch
@@ -67,12 +68,14 @@ def _gradient_loss(pred, target, mask=None):
     return diff.mean()
 
 
-def _fft_loss(pred, target, mask=None):
-    residual = (pred - target).float()
-    if mask is not None:
-        residual = residual * mask.expand_as(residual).float()
-    r = residual.permute(0, 3, 1, 2)
-    return torch.fft.rfft2(r, norm='ortho').abs().mean().to(pred.dtype)
+def _fft_loss(pred, target):
+    """Residual FFT with DC zeroed out — focuses on AC (texture) frequencies only."""
+    residual = (pred - target).float().permute(0, 3, 1, 2)
+    fft_r = torch.fft.rfft2(residual, norm='ortho')
+    # zero DC component [batch, channel, 0, 0]
+    fft_r = fft_r.clone()
+    fft_r[:, :, 0, 0] = 0
+    return fft_r.abs().mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
@@ -91,5 +94,5 @@ def sandbox_loss(pred, target, mask=None,
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
-    loss_fft = _fft_loss(pred, target, mask) * B
+    loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
