@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #37: 4-scale rel L2 + gradient + FFT
-    Add scale-8 to multi-scale setup. Scales [1,2,4,8] with weights [0.45,0.3,0.15,0.1].
-    alpha=0.5, beta=0.3, gamma=0.2
-    Tests whether very coarse scale (8x downsampled) captures useful global structure.
-@version 1.37.0
+@description Experiment #38: multi-scale rel L2 + 5x5 gradient + FFT
+    Same as exp#13 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
+    but use 5x5 Sobel kernels for gradient loss instead of 3x3.
+    Larger kernels capture smoother, more global edge structure.
+@version 1.38.0
 """
 
 import torch
@@ -54,12 +54,17 @@ def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
-            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
+    # 5x5 Sobel kernels
+    sx = torch.tensor([
+        [-1, -2, 0, 2, 1],
+        [-4, -8, 0, 8, 4],
+        [-6,-12, 0,12, 6],
+        [-4, -8, 0, 8, 4],
+        [-1, -2, 0, 2, 1]
+    ], dtype=pred.dtype, device=pred.device).view(1, 1, 5, 5)
+    sy = sx.transpose(2, 3)
+    diff = (torch.abs(F.conv2d(p, sx, padding=2) - F.conv2d(t, sx, padding=2)) +
+            torch.abs(F.conv2d(p, sy, padding=2) - F.conv2d(t, sy, padding=2)))
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
@@ -79,10 +84,10 @@ def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
-        scale_weights = [0.45, 0.30, 0.15, 0.10]
+        scale_weights = [0.5, 0.3, 0.2]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
-    scales = [1, 2, 4, 8]
+    scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
