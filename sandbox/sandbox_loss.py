@@ -1,12 +1,11 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #14: multi-scale rel L2 + gradient + multi-scale FFT
-    Based on exp#13 (new best). Extend FFT loss to all scales (1, 1/2, 1/4)
-    with same scale_weights=[0.5, 0.3, 0.2] to better capture frequency
-    structure at multiple resolutions.
+@description Experiment #15: multi-scale rel L2 + gradient + FFT
+    Same as exp#13 but scale_weights=[0.7, 0.2, 0.1] — heavier emphasis
+    on full-resolution to see if coarse scales are hurting.
     alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (FFT)
-@version 1.14.0
+@version 1.15.0
 """
 
 import torch
@@ -91,9 +90,8 @@ def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     """
-    Multi-scale Relative L2 + Sobel gradient + multi-scale FFT.
-
-    All three losses computed at scales 1, 1/2, 1/4.
+    Multi-scale Relative L2 + Sobel gradient + FFT.
+    scale_weights=[0.7, 0.2, 0.1] for scales [1, 1/2, 1/4].
 
     Args:
         pred:   [B, H, W, C]
@@ -102,10 +100,9 @@ def sandbox_loss(pred, target, mask=None,
         alpha:  rel L2 weight
         beta:   gradient weight
         gamma:  FFT weight
-        scale_weights: per-scale weights, default [0.5, 0.3, 0.2]
     """
     if scale_weights is None:
-        scale_weights = [0.5, 0.3, 0.2]
+        scale_weights = [0.7, 0.2, 0.1]
 
     mask = _align_mask(mask, pred)
     B = pred.size(0)
@@ -113,7 +110,6 @@ def sandbox_loss(pred, target, mask=None,
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
-    loss_fft = pred.new_zeros(1).squeeze()
 
     for s, sw in zip(scales, scale_weights):
         p_s = _downsample(pred, s)
@@ -121,6 +117,7 @@ def sandbox_loss(pred, target, mask=None,
         m_s = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(p_s, t_s, m_s)
         loss_grad = loss_grad + sw * _gradient_loss(p_s, t_s, m_s) * B
-        loss_fft = loss_fft + sw * _fft_loss(p_s, t_s) * B
+
+    loss_fft = _fft_loss(pred, target) * B
 
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
