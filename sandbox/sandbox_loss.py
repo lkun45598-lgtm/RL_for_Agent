@@ -1,10 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #39: multi-scale rel L2 + gradient L2 + FFT
-    Same as exp#13 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    but gradient loss uses squared differences (L2) instead of absolute (L1).
-    Smoother gradient signal, penalizes large errors more.
-@version 1.39.0
+@description Experiment #40: multi-scale rel L2 + gradient + tiny Laplacian + FFT
+    Same base as exp#13 (scale_weights=[0.5,0.3,0.2])
+    alpha=0.5 (rel L2), beta=0.28 (gradient), delta=0.02 (Laplacian), gamma=0.2 (FFT)
+    Small Laplacian term (0.02) to add second-order structure without collapse.
+    exp#21 used delta=0.15 and got 0.6539; exp#20 at 1.0 collapsed.
+@version 1.40.0
 """
 
 import torch
@@ -58,9 +59,22 @@ def _gradient_loss(pred, target, mask=None):
                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
     sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    # L2: squared differences
-    diff = ((F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) ** 2 +
-            (F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)) ** 2)
+    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
+            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
+    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
+    if mask is not None:
+        mf = mask.expand_as(diff).float()
+        return (diff * mf).sum() / mf.sum().clamp(min=1.0)
+    return diff.mean()
+
+
+def _laplacian_loss(pred, target, mask=None):
+    B, H, W, C = pred.shape
+    p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    lap = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]],
+                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    diff = torch.abs(F.conv2d(p, lap, padding=1) - F.conv2d(t, lap, padding=1))
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
@@ -77,7 +91,7 @@ def _fft_loss(pred, target):
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.5, beta=0.28, delta=0.02, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
@@ -86,11 +100,13 @@ def sandbox_loss(pred, target, mask=None,
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
+    loss_lap = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
+        loss_lap = loss_lap + sw * _laplacian_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
+    return alpha * loss_rel + beta * loss_grad + delta * loss_lap + gamma * loss_fft
