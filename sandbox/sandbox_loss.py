@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #38: multi-scale rel L2 + 5x5 gradient + FFT
+@description Experiment #39: multi-scale rel L2 + gradient L2 + FFT
     Same as exp#13 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    but use 5x5 Sobel kernels for gradient loss instead of 3x3.
-    Larger kernels capture smoother, more global edge structure.
-@version 1.38.0
+    but gradient loss uses squared differences (L2) instead of absolute (L1).
+    Smoother gradient signal, penalizes large errors more.
+@version 1.39.0
 """
 
 import torch
@@ -54,17 +54,13 @@ def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    # 5x5 Sobel kernels
-    sx = torch.tensor([
-        [-1, -2, 0, 2, 1],
-        [-4, -8, 0, 8, 4],
-        [-6,-12, 0,12, 6],
-        [-4, -8, 0, 8, 4],
-        [-1, -2, 0, 2, 1]
-    ], dtype=pred.dtype, device=pred.device).view(1, 1, 5, 5)
-    sy = sx.transpose(2, 3)
-    diff = (torch.abs(F.conv2d(p, sx, padding=2) - F.conv2d(t, sx, padding=2)) +
-            torch.abs(F.conv2d(p, sy, padding=2) - F.conv2d(t, sy, padding=2)))
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    # L2: squared differences
+    diff = ((F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) ** 2 +
+            (F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)) ** 2)
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
