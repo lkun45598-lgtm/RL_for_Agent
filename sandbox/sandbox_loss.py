@@ -1,12 +1,12 @@
 """
 @file sandbox_loss.py
-@description Experiment #58: multi-scale rel L2 + SSIM + residual FFT
-    Replace gradient loss (exp#41) with SSIM loss.
-    SSIM captures structural similarity better than Sobel gradients.
-    ssim_loss = 1 - SSIM(pred, target) per channel, averaged.
-    alpha=0.5 (rel L2), beta=0.3 (SSIM), gamma=0.2 (residual FFT)
+@description Experiment #59: multi-scale rel L2 + gradient + residual FFT + divergence regularizer
+    Based on exp#41, add a divergence regularization term for the 2-channel (uo, vo) flow field.
+    Ocean currents are approximately incompressible: div(v) = dvo/dx + dvo/dy ≈ 0.
+    Penalizes predicted field for violating incompressibility.
+    alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (residual FFT), delta=0.05 (divergence)
     scale_weights=[0.5,0.3,0.2]
-@version 1.58.0
+@version 1.59.0
 """
 
 import torch
@@ -52,33 +52,21 @@ def _rel_l2(pred, target, mask=None):
     return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
 
 
-def _ssim_loss(pred, target, window_size=7):
-    """1 - SSIM, computed per channel then averaged."""
+def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
-    p = pred.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    t = target.float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-
-    # Gaussian window
-    coords = torch.arange(window_size, dtype=p.dtype, device=p.device) - window_size // 2
-    g = torch.exp(-coords ** 2 / (2 * 1.5 ** 2))
-    g = g / g.sum()
-    window = g.unsqueeze(0) * g.unsqueeze(1)
-    window = window.unsqueeze(0).unsqueeze(0)  # 1,1,k,k
-
-    pad = window_size // 2
-    mu_p = F.conv2d(p, window, padding=pad)
-    mu_t = F.conv2d(t, window, padding=pad)
-    mu_p2 = mu_p ** 2
-    mu_t2 = mu_t ** 2
-    mu_pt = mu_p * mu_t
-    sigma_p2 = F.conv2d(p * p, window, padding=pad) - mu_p2
-    sigma_t2 = F.conv2d(t * t, window, padding=pad) - mu_t2
-    sigma_pt = F.conv2d(p * t, window, padding=pad) - mu_pt
-
-    C1, C2 = 0.01 ** 2, 0.03 ** 2
-    ssim_map = ((2 * mu_pt + C1) * (2 * sigma_pt + C2)) / (
-        (mu_p2 + mu_t2 + C1) * (sigma_p2 + sigma_t2 + C2))
-    return (1.0 - ssim_map.mean()).to(pred.dtype)
+    p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
+            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
+    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
+    if mask is not None:
+        mf = mask.expand_as(diff).float()
+        return (diff * mf).sum() / mf.sum().clamp(min=1.0)
+    return diff.mean()
 
 
 def _fft_loss(pred, target):
@@ -88,8 +76,33 @@ def _fft_loss(pred, target):
     return fft_r.abs().mean().to(pred.dtype)
 
 
+def _divergence_loss(pred, mask=None):
+    """Incompressibility constraint: div(uo, vo) = dvo/dx + dvo/dy ≈ 0.
+    pred: [B, H, W, 2] where channel 0=uo, channel 1=vo
+    """
+    B, H, W, C = pred.shape
+    if C < 2:
+        return pred.new_zeros(1).squeeze()
+    # uo = pred[..., 0], vo = pred[..., 1]
+    uo = pred[..., 0:1].permute(0, 3, 1, 2)  # [B, 1, H, W]
+    vo = pred[..., 1:2].permute(0, 3, 1, 2)  # [B, 1, H, W]
+    # x-derivative of uo, y-derivative of vo
+    dx = torch.tensor([[0, 0, 0], [-1, 0, 1], [0, 0, 0]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3) * 0.5
+    dy = torch.tensor([[0, -1, 0], [0, 0, 0], [0, 1, 0]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3) * 0.5
+    duo_dx = F.conv2d(uo, dx, padding=1)
+    dvo_dy = F.conv2d(vo, dy, padding=1)
+    div = duo_dx + dvo_dy  # [B, 1, H, W]
+    if mask is not None:
+        # mask: [1, H, W, 1] or [B, H, W, 1]
+        m = mask[..., 0:1].permute(0, 3, 1, 2).float().expand_as(div)
+        return (div.abs() * m).sum() / m.sum().clamp(min=1.0)
+    return div.abs().mean()
+
+
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.5, beta=0.3, gamma=0.2, delta=0.05,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
@@ -97,12 +110,13 @@ def sandbox_loss(pred, target, mask=None,
     B = pred.size(0)
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
-    loss_ssim = pred.new_zeros(1).squeeze()
+    loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_ssim = loss_ssim + sw * _ssim_loss(ps, ts) * B
+        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_rel + beta * loss_ssim + gamma * loss_fft
+    loss_div = _divergence_loss(pred, mask) * B
+    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft + delta * loss_div
