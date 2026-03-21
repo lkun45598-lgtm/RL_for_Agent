@@ -32,3 +32,4 @@ d290a12	0.6442	16.86	discard	exp#26: multi-scale rel L2 + gradient + masked FFT 
 d95b30d	0.6555	17.02	keep	exp#29: single-scale exp#7 replication (SwinIR=0.6555 EDSR=0.6796 FNO2d=0.4868 UNet2d=0.5754)
 5c18799	0.6462	16.97	discard	exp#30: multi-scale rel L2 + gradient + FFT, scale_weights=[0.85,0.1,0.05] (SwinIR=0.6462 EDSR=0.6859 FNO2d=0.4742 UNet2d=0.5829)
 4cca747	0.6530	17.07	discard	exp#31: multi-scale rel L2 + gradient + FFT, decoupled scale weights rl2=[0.5,0.3,0.2] grad=[0.7,0.2,0.1] (SwinIR=0.6530 EDSR=0.6745 FNO2d=0.4546 UNet2d=0.5666)
+40cc423	0.6616	17.18	discard	exp#32: multi-scale rel L2 + gradient + complex FFT L1 (SwinIR=0.6616 EDSR=0.6817 FNO2d=0.4344 UNet2d=0.5750)

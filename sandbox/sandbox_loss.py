@@ -1,11 +1,12 @@
 """
 @file sandbox_loss.py
-@description Experiment #32: multi-scale rel L2 + gradient + complex FFT L1
-    Same as exp#13 (scale_weights=[0.5,0.3,0.2]) but replace FFT amplitude
-    difference with complex L1: mean(|fft_pred - fft_target|) which captures
-    both amplitude and phase without the phase-only collapse seen in exp#22.
+@description Experiment #33: multi-scale rel L2 + full-scale-only gradient + FFT
+    rel L2 at scales [1,2,4] with weights [0.5,0.3,0.2] (same as exp#13)
+    gradient loss only at scale 1 (full resolution)
+    FFT at full scale
     alpha=0.5, beta=0.3, gamma=0.2
-@version 1.32.0
+    Tests whether gradient at coarse scales helps or hurts.
+@version 1.33.0
 """
 
 import torch
@@ -69,13 +70,11 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
-    """Complex FFT L1: mean |fft(pred) - fft(target)| captures amplitude+phase jointly."""
     p = pred.float().permute(0, 3, 1, 2)
     t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm='ortho')
     fft_t = torch.fft.rfft2(t, norm='ortho')
-    # complex L1: magnitude of complex difference vector
-    return torch.abs(fft_p - fft_t).mean().to(pred.dtype)
+    return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
@@ -87,12 +86,12 @@ def sandbox_loss(pred, target, mask=None,
     B = pred.size(0)
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
-    loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
+    # gradient only at full scale
+    loss_grad = _gradient_loss(pred, target, mask) * B
     loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
