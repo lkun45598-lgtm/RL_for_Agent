@@ -1,11 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #50: multi-scale rel L2 + gradient + gradient-residual FFT
-    Same base as exp#41 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    FFT computed on Sobel gradient magnitude of residual:
-    fft_loss = rfft2(|grad(pred-target)|).abs().mean()
-    This captures spatial frequency of edge errors, not just pixel errors.
-@version 1.50.0
+@description Experiment #51: multi-scale rel L2 + gradient + log1p residual FFT
+    Same as exp#41 base (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
+    but FFT = mean(log1p(|rfft2(pred-target, norm='ortho')|))
+    log1p compresses large spectral errors and gives more gradient to small errors.
+@version 1.51.0
 """
 
 import torch
@@ -69,17 +68,9 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
-    """FFT of gradient magnitude of residual."""
-    B, H, W, C = pred.shape
-    r = (pred - target).float().permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=torch.float32, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=torch.float32, device=pred.device).view(1, 1, 3, 3)
-    grad_mag = (F.conv2d(r, sx, padding=1).abs() + F.conv2d(r, sy, padding=1).abs())
-    grad_mag = grad_mag.reshape(B, C, H, W)
-    fft_r = torch.fft.rfft2(grad_mag, norm='ortho')
-    return fft_r.abs().mean().to(pred.dtype)
+    residual = (pred - target).float().permute(0, 3, 1, 2)
+    spec = torch.fft.rfft2(residual, norm='ortho').abs()
+    return torch.log1p(spec).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
