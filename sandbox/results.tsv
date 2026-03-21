@@ -51,3 +51,4 @@ e2d326a	0.6629	17.11	discard	exp#44: multi-scale rel L2 + gradient + multi-scale
 51254fc	0.6448	17.11	discard	exp#48: masked residual FFT (SwinIR=0.6448 EDSR=0.6819 FNO2d=0.4318 UNet2d=0.5695)
 2f381fc	0.6361	17.11	discard	exp#49: residual FFT DC-zeroed (SwinIR=0.6361 EDSR=0.6820 FNO2d=0.4346 UNet2d=0.5709)
 4703d01	0.5992	17.11	discard	exp#50: gradient-residual FFT (SwinIR=0.5992 EDSR=0.6573 FNO2d=0.4327 UNet2d=0.5631)
+7b84f8e	0.6602	17.11	discard	exp#51: log1p residual FFT (SwinIR=0.6602 EDSR=0.6818 FNO2d=0.4357 UNet2d=0.5633)
