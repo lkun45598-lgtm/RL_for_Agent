@@ -1,12 +1,11 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #22: multi-scale rel L2 + gradient + FFT (amplitude+phase)
-    Extend FFT loss to include phase spectrum (real+imag components)
-    in addition to amplitude. Ocean waves have important phase structure.
-    alpha=0.5, beta=0.3, gamma_amp=0.1, gamma_phase=0.1
+@description Experiment #23: multi-scale rel L2 + gradient + FFT
+    Fine-tune from exp#13: alpha=0.5, beta=0.25, gamma=0.25
+    Equal weight on gradient and FFT.
     scale_weights=[0.5, 0.3, 0.2]
-@version 1.22.0
+@version 1.23.0
 """
 
 import torch
@@ -69,36 +68,26 @@ def _gradient_loss(pred, target, mask=None):
     gy_p = F.conv2d(p, sobel_y, padding=1)
     gx_t = F.conv2d(t, sobel_x, padding=1)
     gy_t = F.conv2d(t, sobel_y, padding=1)
-    diff_x = torch.abs(gx_p - gx_t)
-    diff_y = torch.abs(gy_p - gy_t)
-    grad_diff = (diff_x + diff_y).reshape(B, C, H, W).permute(0, 2, 3, 1)
+    diff = (torch.abs(gx_p - gx_t) + torch.abs(gy_p - gy_t))
+    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
-        mask_f = mask.expand_as(grad_diff).float()
+        mask_f = mask.expand_as(diff).float()
         n_valid = mask_f.sum().clamp(min=1.0)
-        return (grad_diff * mask_f).sum() / n_valid
-    return grad_diff.mean()
+        return (diff * mask_f).sum() / n_valid
+    return diff.mean()
 
 
 def _fft_loss(pred, target):
-    """FFT amplitude + phase loss."""
     p = pred.float().permute(0, 3, 1, 2)
     t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm="ortho")
     fft_t = torch.fft.rfft2(t, norm="ortho")
-    # Amplitude loss
-    amp_diff = torch.abs(fft_p.abs() - fft_t.abs()).mean()
-    # Phase loss (normalized angle difference)
-    phase_p = torch.angle(fft_p)
-    phase_t = torch.angle(fft_t)
-    phase_diff = torch.abs(phase_p - phase_t)
-    # Wrap to [-pi, pi]
-    phase_diff = torch.where(phase_diff > 3.14159, 2 * 3.14159 - phase_diff, phase_diff)
-    phase_loss = phase_diff.mean()
-    return (amp_diff + 0.5 * phase_loss).to(pred.dtype)
+    amp_diff = torch.abs(fft_p.abs() - fft_t.abs())
+    return amp_diff.mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.5, beta=0.25, gamma=0.25,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
