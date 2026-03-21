@@ -1,10 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #70: multi-scale rel L2 + Prewitt gradient + residual FFT
-    Replace Sobel with Prewitt kernel (uniform row weights, no center emphasis).
-    Prewitt: sx=[[-1,0,1],[-1,0,1],[-1,0,1]], sy=sx.T
+@description Experiment #71: multi-scale rel L2 + partial-scale gradient + residual FFT
+    Gradient loss computed only at scale=1 and scale=2 (skip scale=4).
+    Rel L2 still at all 3 scales [1,2,4].
+    Hypothesis: scale=4 gradient is too coarse to be useful.
     alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.70.0
+@version 1.71.0
 """
 
 import torch
@@ -54,10 +55,9 @@ def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    # Prewitt kernels
-    sx = torch.tensor([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]],
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -1, -1], [0, 0, 0], [1, 1, 1]],
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
     diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
             torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
@@ -82,6 +82,8 @@ def sandbox_loss(pred, target, mask=None,
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = [1, 2, 4]
+    grad_scales = [1, 2]  # gradient only at fine scales
+    grad_weights = [0.6, 0.4]  # renormalized weights for 2 scales
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
@@ -89,6 +91,10 @@ def sandbox_loss(pred, target, mask=None,
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
+    for s, sw in zip(grad_scales, grad_weights):
+        ps = _downsample(pred, s)
+        ts = _downsample(target, s)
+        ms = _downsample_mask(mask, s)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
