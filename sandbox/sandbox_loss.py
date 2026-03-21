@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #36: multi-scale rel L2 + gradient + relative FFT amplitude loss
-    Same as exp#13 (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    but replace FFT amplitude diff with relative amplitude: mean(|A_p - A_t| / (A_t + eps))
-    This equalizes contribution across frequency bands (similar to how rel_l2 normalizes pixels).
-@version 1.36.0
+@description Experiment #37: 4-scale rel L2 + gradient + FFT
+    Add scale-8 to multi-scale setup. Scales [1,2,4,8] with weights [0.45,0.3,0.15,0.1].
+    alpha=0.5, beta=0.3, gamma=0.2
+    Tests whether very coarse scale (8x downsampled) captures useful global structure.
+@version 1.37.0
 """
 
 import torch
@@ -68,24 +68,21 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
-    """Relative FFT amplitude: mean(|A_pred - A_target| / (A_target + eps))."""
     p = pred.float().permute(0, 3, 1, 2)
     t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm='ortho')
     fft_t = torch.fft.rfft2(t, norm='ortho')
-    amp_p = fft_p.abs()
-    amp_t = fft_t.abs()
-    return (torch.abs(amp_p - amp_t) / (amp_t + 1e-6)).mean().to(pred.dtype)
+    return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
-        scale_weights = [0.5, 0.3, 0.2]
+        scale_weights = [0.45, 0.30, 0.15, 0.10]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
-    scales = [1, 2, 4]
+    scales = [1, 2, 4, 8]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
