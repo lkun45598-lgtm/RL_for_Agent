@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #68: multi-scale rel L2 + 5x5 Sobel gradient + residual FFT
-    Same as exp#41 but use 5x5 Sobel kernel for larger spatial context in gradient.
-    Hypothesis: larger receptive field captures coarser structural differences.
+@description Experiment #69: per-channel rel L2 + gradient + residual FFT
+    Same as exp#41 but rel L2 normalized per-channel instead of jointly.
+    uo and vo may have different magnitudes; per-channel norm treats them equally.
     alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.68.0
+@version 1.69.0
 """
 
 import torch
@@ -40,31 +40,36 @@ def _downsample_mask(mask, scale):
     return (m > 0.5).permute(0, 2, 3, 1)
 
 
-def _rel_l2(pred, target, mask=None):
-    B = pred.size(0)
-    pf = pred.reshape(B, -1)
-    tf = target.reshape(B, -1)
-    mf = mask.expand_as(pred).reshape(B, -1).float() if mask is not None else torch.ones_like(pf)
-    diff = (pf - tf) * mf
-    ym = tf * mf
-    return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
+def _rel_l2_perchannel(pred, target, mask=None):
+    """Compute rel L2 per channel (C dimension) and sum."""
+    B, H, W, C = pred.shape
+    total = pred.new_zeros(1).squeeze()
+    for c in range(C):
+        pc = pred[..., c]  # B, H, W
+        tc = target[..., c]
+        mc = mask[..., 0] if mask is not None else None  # B, H, W (broadcast)
+        pf = pc.reshape(B, -1)
+        tf = tc.reshape(B, -1)
+        if mc is not None:
+            mf = mc.reshape(B, -1).float()
+        else:
+            mf = torch.ones_like(pf)
+        diff = (pf - tf) * mf
+        ym = tf * mf
+        total = total + (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
+    return total
 
 
 def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    # 5x5 Sobel kernels
-    sx = torch.tensor([
-        [-1, -2, 0, 2, 1],
-        [-4, -8, 0, 8, 4],
-        [-6, -12, 0, 12, 6],
-        [-4, -8, 0, 8, 4],
-        [-1, -2, 0, 2, 1],
-    ], dtype=pred.dtype, device=pred.device).view(1, 1, 5, 5)
-    sy = sx.transpose(2, 3)
-    diff = (torch.abs(F.conv2d(p, sx, padding=2) - F.conv2d(t, sx, padding=2)) +
-            torch.abs(F.conv2d(p, sy, padding=2) - F.conv2d(t, sy, padding=2)))
+    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
+            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
@@ -92,7 +97,7 @@ def sandbox_loss(pred, target, mask=None,
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
-        loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
+        loss_rel = loss_rel + sw * _rel_l2_perchannel(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
