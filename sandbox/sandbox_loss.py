@@ -1,12 +1,12 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #13: multi-scale rel L2 + gradient + FFT
-    Compute rel L2 and gradient loss at multiple scales (original + 2x/4x downsampled)
-    to capture both fine-grained and coarse structure.
+@description Experiment #17: multi-scale rel L2 + gradient + FFT, scale_weights=[0.6,0.3,0.1]
+    Based on exp#13 (best SwinIR/EDSR). Reduce coarse scale weight to
+    mitigate FNO2d regression while keeping multi-scale benefit.
     alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (FFT)
-    scale weights: [0.5, 0.3, 0.2] for scales [1, 1/2, 1/4]
-@version 1.13.0
+    scale_weights=[0.6, 0.3, 0.1]
+@version 1.17.0
 """
 
 import torch
@@ -26,11 +26,10 @@ def _align_mask(mask, pred):
 
 
 def _downsample(x, scale):
-    """Downsample [B, H, W, C] by given scale factor using avg pool."""
     if scale == 1:
         return x
     B, H, W, C = x.shape
-    t = x.permute(0, 3, 1, 2)  # [B, C, H, W]
+    t = x.permute(0, 3, 1, 2)
     t = F.avg_pool2d(t, kernel_size=scale, stride=scale)
     return t.permute(0, 2, 3, 1)
 
@@ -94,21 +93,10 @@ def sandbox_loss(pred, target, mask=None,
                  scale_weights=None, **kwargs):
     """
     Multi-scale Relative L2 + Sobel gradient + FFT.
-
-    Computes rel L2 + gradient at 3 scales (1, 1/2, 1/4),
-    then adds FFT loss at full scale only.
-
-    Args:
-        pred:   [B, H, W, C]
-        target: [B, H, W, C]
-        mask:   [1, H_m, W_m, 1] bool
-        alpha:  rel L2 weight
-        beta:   gradient weight
-        gamma:  FFT weight
-        scale_weights: weights per scale, default [0.5, 0.3, 0.2]
+    scale_weights=[0.6, 0.3, 0.1] — less coarse scale emphasis.
     """
     if scale_weights is None:
-        scale_weights = [0.5, 0.3, 0.2]
+        scale_weights = [0.6, 0.3, 0.1]
 
     mask = _align_mask(mask, pred)
     B = pred.size(0)
