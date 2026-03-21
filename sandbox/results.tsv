@@ -46,3 +46,4 @@ f682743	0.6645	17.11	keep	exp#41: multi-scale rel L2 + gradient + residual FFT (
 bcb4dc9	0.6601	17.17	discard	exp#43: residual FFT, alpha=0.45 beta=0.35 gamma=0.2 (SwinIR=0.6601 EDSR=0.6805 FNO2d=0.4341 UNet2d=0.5547)
 e2d326a	0.6629	17.11	discard	exp#44: multi-scale rel L2 + gradient + multi-scale residual FFT (SwinIR=0.6629 EDSR=0.6833 FNO2d=0.4321 UNet2d=0.5674)
 50e1b66	0.6620	17.11	discard	exp#45: residual FFT + scale_weights=[0.6,0.25,0.15] (SwinIR=0.6620 EDSR=0.6670 FNO2d=0.4434 UNet2d=0.5706)
+754124e	0.6503	17.11	discard	exp#46: residual FFT + scale_weights=[0.55,0.28,0.17] (SwinIR=0.6503 EDSR=0.6725 FNO2d=0.4413 UNet2d=0.5669)

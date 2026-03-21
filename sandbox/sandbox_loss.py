@@ -1,9 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #46: residual FFT + scale_weights=[0.55,0.28,0.17]
-    Same as exp#41 (residual FFT, alpha=0.5, beta=0.3, gamma=0.2)
-    but slightly shift scale weights toward fine scale.
-@version 1.46.0
+@description Experiment #47: multi-scale rel L2 + gradient + blended FFT (residual + amplitude-diff)
+    Same as exp#41 base (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
+    FFT = 0.5 * residual_fft + 0.5 * amplitude_diff_fft
+    Tests if combining both FFT formulations helps.
+@version 1.47.0
 """
 
 import torch
@@ -67,15 +68,20 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
-    residual = (pred - target).float().permute(0, 3, 1, 2)
-    return torch.fft.rfft2(residual, norm='ortho').abs().mean().to(pred.dtype)
+    p = pred.float().permute(0, 3, 1, 2)
+    t = target.float().permute(0, 3, 1, 2)
+    fft_p = torch.fft.rfft2(p, norm='ortho')
+    fft_t = torch.fft.rfft2(t, norm='ortho')
+    residual_fft = torch.fft.rfft2((pred - target).float().permute(0, 3, 1, 2), norm='ortho').abs().mean()
+    amp_diff_fft = torch.abs(fft_p.abs() - fft_t.abs()).mean()
+    return (0.5 * residual_fft + 0.5 * amp_diff_fft).to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
-        scale_weights = [0.55, 0.28, 0.17]
+        scale_weights = [0.5, 0.3, 0.2]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = [1, 2, 4]
