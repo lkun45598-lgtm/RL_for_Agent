@@ -1,12 +1,11 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #18: 2-scale rel L2 + gradient + FFT
-    Reduce to 2 scales (1, 2) with weights [0.7, 0.3] — remove scale-4
-    which hurt FNO2d. Tests whether scale-4 is responsible for FNO2d regression.
-    alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (FFT)
-    scale_weights=[0.7, 0.3] for scales [1, 1/2]
-@version 1.18.0
+@description Experiment #19: rel L2 + relative gradient + FFT (multi-scale)
+    Normalize gradient loss by target gradient norm (relative gradient),
+    making it scale-invariant across models.
+    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
+@version 1.19.0
 """
 
 import torch
@@ -57,7 +56,8 @@ def _rel_l2(pred, target, mask=None):
     return (diff_norms / y_norms).sum()
 
 
-def _gradient_loss(pred, target, mask=None):
+def _rel_gradient_loss(pred, target, mask=None):
+    """Relative gradient loss: normalize by target gradient norm."""
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
@@ -69,8 +69,9 @@ def _gradient_loss(pred, target, mask=None):
     gy_p = F.conv2d(p, sobel_y, padding=1)
     gx_t = F.conv2d(t, sobel_x, padding=1)
     gy_t = F.conv2d(t, sobel_y, padding=1)
-    diff_x = torch.abs(gx_p - gx_t)
-    diff_y = torch.abs(gy_p - gy_t)
+    grad_mag_t = (gx_t.pow(2) + gy_t.pow(2)).sqrt().clamp(min=1e-8)
+    diff_x = (gx_p - gx_t).abs() / grad_mag_t
+    diff_y = (gy_p - gy_t).abs() / grad_mag_t
     grad_diff = (diff_x + diff_y).reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mask_f = mask.expand_as(grad_diff).float()
@@ -84,24 +85,23 @@ def _fft_loss(pred, target):
     t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm='ortho')
     fft_t = torch.fft.rfft2(t, norm='ortho')
-    amp_diff = torch.abs(fft_p.abs() - fft_t.abs())
-    return amp_diff.mean().to(pred.dtype)
+    return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     """
-    2-scale Relative L2 + Sobel gradient + FFT.
-    Scales: [1, 2], weights: [0.7, 0.3].
+    Multi-scale Relative L2 + Relative Gradient + FFT.
+    scale_weights=[0.5, 0.3, 0.2] for scales [1, 2, 4].
     """
     if scale_weights is None:
-        scale_weights = [0.7, 0.3]
+        scale_weights = [0.5, 0.3, 0.2]
 
     mask = _align_mask(mask, pred)
     B = pred.size(0)
+    scales = [1, 2, 4]
 
-    scales = [1, 2]
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
 
@@ -110,7 +110,7 @@ def sandbox_loss(pred, target, mask=None,
         t_s = _downsample(target, s)
         m_s = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(p_s, t_s, m_s)
-        loss_grad = loss_grad + sw * _gradient_loss(p_s, t_s, m_s) * B
+        loss_grad = loss_grad + sw * _rel_gradient_loss(p_s, t_s, m_s) * B
 
     loss_fft = _fft_loss(pred, target) * B
 
