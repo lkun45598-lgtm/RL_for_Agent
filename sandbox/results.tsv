@@ -1,0 +1,33 @@
+‘commit	val_ssim	val_psnr	status	description
+e9e837e	0.611616	16.52	keep	baseline relative L2 (SwinIR)
+0cecc1e	0.608309	16.35	discard	exp#1: masked L1 loss
+cf9ff7d	0.596039	16.09	discard	exp#2: Charbonnier loss
+e230bef	0.620835	16.41	keep	exp#3: relative L2 + gradient loss (alpha=0.8 beta=0.2)
+1e30845	0.635681	16.72	keep	exp#4: rel L2 + gradient (alpha=0.6 beta=0.4)
+848b6c8	0.626180	16.58	discard	exp#5: rel L2 + gradient (alpha=0.5 beta=0.5)
+9efa0ef	0.645213	16.75	keep	exp#6: rel L2 + gradient + FFT (alpha=0.6 beta=0.3 gamma=0.1)
+08d789a	0.655468	17.02	keep	exp#7: rel L2 + gradient + FFT (alpha=0.5 beta=0.3 gamma=0.2)
+09b054d	0.639965	16.67	discard	exp#8: rel L2 + gradient + FFT (alpha=0.4 beta=0.3 gamma=0.3)
+e04b238	0.624631	16.24	discard	exp#9: FFT high-freq weighted
+f7735a9	0.6317	16.69	discard	exp#10: rel L2 + gradient + FFT + divergence (alpha=0.5 beta=0.25 gamma=0.15 delta=0.1)
+0958054	0.109	9.50	discard	exp#11: rel L2 + gradient + FFT + SSIM loss (collapsed)
+91e03a0	0.6373	16.73	discard	exp#12: rel L2 + gradient + FFT (alpha=0.45 beta=0.35 gamma=0.2)
+5a05e4c	0.6624	17.11	keep	exp#13: multi-scale rel L2 + gradient + FFT (scales 1,2,4)
+f1d3d9d	0.6548	17.10	discard	exp#14: multi-scale rel L2 + gradient + multi-scale FFT (scales 1,2,4)
+68e508d	0.6414	16.66	discard	exp#15: multi-scale rel L2 + gradient + FFT, scale_weights=[0.7,0.2,0.1]
+7f47516	0.6532	17.11	discard	exp#16: multi-scale rel L2 + gradient + FFT, scale_weights=[0.4,0.35,0.25]
+7d46cea	0.6624	17.11	keep	exp#13 4-model: SwinIR=0.6624 EDSR=0.6789 UNet2d=0.5794 FNO2d=0.4377
+a976742	0.6328	16.82	discard	exp#17: multi-scale rel L2 + gradient + FFT, scale_weights=[0.6,0.3,0.1]
+78e6b04	0.6257	16.72	discard	exp#18: 2-scale rel L2 + gradient + FFT, scales=[1,2] weights=[0.7,0.3] (EDSR=0.6839 FNO2d=0.4829)
+e8d33c9	0.436	12.71	discard	exp#19: multi-scale rel L2 + relative gradient + FFT (rel gradient collapsed)
+f74f1a6	0.439	13.59	discard	exp#20: multi-scale rel L2 + Laplacian + FFT (Laplacian collapsed)
+2ce867f	0.6539	16.87	discard	exp#21: multi-scale rel L2 + Sobel + Laplacian + FFT (SwinIR=0.6539 EDSR=0.6617)
+7857774	0.6416	16.88	discard	exp#22: multi-scale rel L2 + gradient + FFT amp+phase (FNO2d collapsed=0.088)
+7cdf01f	0.6385	16.92	discard	exp#23: multi-scale rel L2 + gradient + FFT, alpha=0.5 beta=0.25 gamma=0.25
+a0b4df3	0.5849	16.00	discard	exp#24: multi-scale rel L2 + Huber gradient + FFT (Huber too aggressive)
+64d5acb	0.6330	16.79	discard	exp#25: multi-scale rel L2 + gradient L2-norm + FFT (SwinIR=0.633 FNO2d=0.245)
+d290a12	0.6442	16.86	discard	exp#26: multi-scale rel L2 + gradient + masked FFT (SwinIR=0.6442 EDSR=0.6794)
+0f52e6e	0.6230	16.52	discard	exp#27: multi-scale rel L2 + gradient + normalized FFT (FNO2d=0.088)
+07e7545	0.6474	16.64	discard	exp#28: multi-scale rel L2 + gradient + FFT, alpha=0.4 beta=0.4 gamma=0.2
+d95b30d	0.6555	17.02	keep	exp#29: single-scale exp#7 replication (SwinIR=0.6555 EDSR=0.6796 FNO2d=0.4868 UNet2d=0.5754)
+5c18799	0.6462	16.97	discard	exp#30: multi-scale rel L2 + gradient + FFT, scale_weights=[0.85,0.1,0.05] (SwinIR=0.6462 EDSR=0.6859 FNO2d=0.4742 UNet2d=0.5829)
