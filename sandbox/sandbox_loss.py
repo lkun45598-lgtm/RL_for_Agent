@@ -1,10 +1,12 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #12: rel L2 + gradient + FFT, fine-tune weights
-    Based on exp#7 best (alpha=0.5 beta=0.3 gamma=0.2).
-    Probe alpha=0.45, beta=0.35, gamma=0.2 — shift weight toward gradient.
-@version 1.12.0
+@description Experiment #13: multi-scale rel L2 + gradient + FFT
+    Compute rel L2 and gradient loss at multiple scales (original + 2x/4x downsampled)
+    to capture both fine-grained and coarse structure.
+    alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (FFT)
+    scale weights: [0.5, 0.3, 0.2] for scales [1, 1/2, 1/4]
+@version 1.13.0
 """
 
 import torch
@@ -21,6 +23,39 @@ def _align_mask(mask, pred):
     m = mask.permute(0, 3, 1, 2).float()
     m = F.interpolate(m, size=(H, W), mode='nearest')
     return m.permute(0, 2, 3, 1).bool()
+
+
+def _downsample(x, scale):
+    """Downsample [B, H, W, C] by given scale factor using avg pool."""
+    if scale == 1:
+        return x
+    B, H, W, C = x.shape
+    t = x.permute(0, 3, 1, 2)  # [B, C, H, W]
+    t = F.avg_pool2d(t, kernel_size=scale, stride=scale)
+    return t.permute(0, 2, 3, 1)
+
+
+def _downsample_mask(mask, scale):
+    if mask is None or scale == 1:
+        return mask
+    m = mask.permute(0, 3, 1, 2).float()
+    m = F.avg_pool2d(m, kernel_size=scale, stride=scale)
+    return (m > 0.5).permute(0, 2, 3, 1)
+
+
+def _rel_l2(pred, target, mask=None):
+    B = pred.size(0)
+    pred_flat = pred.reshape(B, -1)
+    target_flat = target.reshape(B, -1)
+    if mask is not None:
+        mask_flat = mask.expand_as(pred).reshape(B, -1).float()
+    else:
+        mask_flat = torch.ones_like(pred_flat)
+    diff = (pred_flat - target_flat) * mask_flat
+    y_masked = target_flat * mask_flat
+    diff_norms = torch.norm(diff, 2, dim=1)
+    y_norms = torch.norm(y_masked, 2, dim=1).clamp(min=1e-8)
+    return (diff_norms / y_norms).sum()
 
 
 def _gradient_loss(pred, target, mask=None):
@@ -55,10 +90,13 @@ def _fft_loss(pred, target):
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.45, beta=0.35, gamma=0.2, **kwargs):
+                 alpha=0.5, beta=0.3, gamma=0.2,
+                 scale_weights=None, **kwargs):
     """
-    Relative L2 + Sobel gradient + FFT.
-    Fine-tuned weights: alpha=0.45, beta=0.35, gamma=0.2.
+    Multi-scale Relative L2 + Sobel gradient + FFT.
+
+    Computes rel L2 + gradient at 3 scales (1, 1/2, 1/4),
+    then adds FFT loss at full scale only.
 
     Args:
         pred:   [B, H, W, C]
@@ -67,25 +105,25 @@ def sandbox_loss(pred, target, mask=None,
         alpha:  rel L2 weight
         beta:   gradient weight
         gamma:  FFT weight
+        scale_weights: weights per scale, default [0.5, 0.3, 0.2]
     """
+    if scale_weights is None:
+        scale_weights = [0.5, 0.3, 0.2]
+
     mask = _align_mask(mask, pred)
-
     B = pred.size(0)
-    pred_flat = pred.reshape(B, -1)
-    target_flat = target.reshape(B, -1)
 
-    if mask is not None:
-        mask_flat = mask.expand_as(pred).reshape(B, -1).float()
-    else:
-        mask_flat = torch.ones_like(pred_flat)
+    scales = [1, 2, 4]
+    loss_rel = pred.new_zeros(1).squeeze()
+    loss_grad = pred.new_zeros(1).squeeze()
 
-    diff = (pred_flat - target_flat) * mask_flat
-    y_masked = target_flat * mask_flat
-    diff_norms = torch.norm(diff, 2, dim=1)
-    y_norms = torch.norm(y_masked, 2, dim=1).clamp(min=1e-8)
-    loss_rel = (diff_norms / y_norms).sum()
+    for s, sw in zip(scales, scale_weights):
+        p_s = _downsample(pred, s)
+        t_s = _downsample(target, s)
+        m_s = _downsample_mask(mask, s)
+        loss_rel = loss_rel + sw * _rel_l2(p_s, t_s, m_s)
+        loss_grad = loss_grad + sw * _gradient_loss(p_s, t_s, m_s) * B
 
-    loss_grad = _gradient_loss(pred, target, mask) * B
     loss_fft = _fft_loss(pred, target) * B
 
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
