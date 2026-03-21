@@ -1,11 +1,11 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #25: multi-scale rel L2 + gradient L2-norm + FFT
-    Replace MAE gradient (|gx|+|gy|) with L2-norm (sqrt(gx^2+gy^2)).
-    Geometrically more accurate gradient magnitude.
+@description Experiment #26: multi-scale rel L2 + gradient + masked FFT
+    Apply ocean mask to pred/target before computing FFT loss,
+    so land pixels do not pollute the frequency domain signal.
     alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.25.0
+@version 1.26.0
 """
 
 import torch
@@ -68,10 +68,7 @@ def _gradient_loss(pred, target, mask=None):
     gy_p = F.conv2d(p, sobel_y, padding=1)
     gx_t = F.conv2d(t, sobel_x, padding=1)
     gy_t = F.conv2d(t, sobel_y, padding=1)
-    # L2 gradient magnitude difference
-    mag_p = torch.sqrt(gx_p ** 2 + gy_p ** 2 + 1e-8)
-    mag_t = torch.sqrt(gx_t ** 2 + gy_t ** 2 + 1e-8)
-    diff = torch.abs(mag_p - mag_t)
+    diff = (torch.abs(gx_p - gx_t) + torch.abs(gy_p - gy_t))
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mask_f = mask.expand_as(diff).float()
@@ -80,9 +77,15 @@ def _gradient_loss(pred, target, mask=None):
     return diff.mean()
 
 
-def _fft_loss(pred, target):
-    p = pred.float().permute(0, 3, 1, 2)
-    t = target.float().permute(0, 3, 1, 2)
+def _fft_loss_masked(pred, target, mask=None):
+    """FFT loss with mask applied before transform."""
+    if mask is not None:
+        mask_f = mask.expand_as(pred).float()
+        p = (pred * mask_f).float().permute(0, 3, 1, 2)
+        t = (target * mask_f).float().permute(0, 3, 1, 2)
+    else:
+        p = pred.float().permute(0, 3, 1, 2)
+        t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm="ortho")
     fft_t = torch.fft.rfft2(t, norm="ortho")
     amp_diff = torch.abs(fft_p.abs() - fft_t.abs())
@@ -109,6 +112,6 @@ def sandbox_loss(pred, target, mask=None,
         loss_rel = loss_rel + sw * _rel_l2(p_s, t_s, m_s)
         loss_grad = loss_grad + sw * _gradient_loss(p_s, t_s, m_s) * B
 
-    loss_fft = _fft_loss(pred, target) * B
+    loss_fft = _fft_loss_masked(pred, target, mask) * B
 
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
