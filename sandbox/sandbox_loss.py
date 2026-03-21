@@ -1,12 +1,13 @@
 """
 @file sandbox_loss.py
-@description Experiment #56: multi-scale rel L2 + gradient + spectral amplitude matching
-    Replace residual FFT (exp#41) with spectral amplitude matching:
-    fft_loss = mean(||FFT(pred)| - |FFT(target)||)
-    This matches the amplitude spectrum directly, ignoring phase.
-    alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (amp FFT)
+@description Experiment #57: multi-scale rel L2 + relative gradient + residual FFT
+    Replace absolute gradient loss with relative gradient loss:
+    rel_grad = |grad(pred) - grad(target)| / (|grad(target)| + eps)
+    This normalizes gradient errors by target gradient magnitude,
+    making it scale-invariant like the rel L2 term.
+    alpha=0.5 (rel L2), beta=0.3 (rel gradient), gamma=0.2 (residual FFT)
     scale_weights=[0.5,0.3,0.2]
-@version 1.56.0
+@version 1.57.0
 """
 
 import torch
@@ -52,7 +53,8 @@ def _rel_l2(pred, target, mask=None):
     return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
 
 
-def _gradient_loss(pred, target, mask=None):
+def _rel_gradient_loss(pred, target, mask=None):
+    """Relative gradient loss: normalize by target gradient magnitude."""
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
@@ -60,22 +62,25 @@ def _gradient_loss(pred, target, mask=None):
                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
     sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
                       dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
-            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
-    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
+    gp_x = F.conv2d(p, sx, padding=1)
+    gp_y = F.conv2d(p, sy, padding=1)
+    gt_x = F.conv2d(t, sx, padding=1)
+    gt_y = F.conv2d(t, sy, padding=1)
+    diff = torch.abs(gp_x - gt_x) + torch.abs(gp_y - gt_y)
+    tgt_mag = (gt_x.abs() + gt_y.abs()).clamp(min=1e-6)
+    rel_diff = diff / tgt_mag
+    rel_diff = rel_diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
-        mf = mask.expand_as(diff).float()
-        return (diff * mf).sum() / mf.sum().clamp(min=1.0)
-    return diff.mean()
+        mf = mask.expand_as(rel_diff).float()
+        return (rel_diff * mf).sum() / mf.sum().clamp(min=1.0) * B
+    return rel_diff.mean() * B
 
 
-def _fft_amplitude_loss(pred, target):
-    """Spectral amplitude matching: ||FFT(pred)| - |FFT(target)||."""
-    p = pred.float().permute(0, 3, 1, 2)
-    t = target.float().permute(0, 3, 1, 2)
-    amp_pred = torch.fft.rfft2(p, norm='ortho').abs()
-    amp_tgt = torch.fft.rfft2(t, norm='ortho').abs()
-    return (amp_pred - amp_tgt).abs().mean().to(pred.dtype)
+def _fft_loss(pred, target):
+    """FFT of residual: spectral energy of the error signal."""
+    residual = (pred - target).float().permute(0, 3, 1, 2)
+    fft_r = torch.fft.rfft2(residual, norm='ortho')
+    return fft_r.abs().mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
@@ -93,6 +98,6 @@ def sandbox_loss(pred, target, mask=None,
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
-    loss_fft = _fft_amplitude_loss(pred, target) * B
+        loss_grad = loss_grad + sw * _rel_gradient_loss(ps, ts, ms)
+    loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
