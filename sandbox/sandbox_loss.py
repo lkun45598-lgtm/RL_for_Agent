@@ -1,12 +1,12 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #20: multi-scale rel L2 + Laplacian + FFT
-    Replace Sobel gradient with Laplacian (second-order sharpness).
-    Laplacian captures edges/corners more isotropically than Sobel.
-    alpha=0.5, beta=0.3 (Laplacian), gamma=0.2 (FFT)
+@description Experiment #21: multi-scale rel L2 + (Sobel + Laplacian) + FFT
+    Combine Sobel (first-order edges) and Laplacian (second-order sharpness)
+    as complementary gradient terms.
+    alpha=0.5, beta=0.15 (Sobel), delta=0.15 (Laplacian), gamma=0.2 (FFT)
     scale_weights=[0.5, 0.3, 0.2]
-@version 1.20.0
+@version 1.21.0
 """
 
 import torch
@@ -57,20 +57,36 @@ def _rel_l2(pred, target, mask=None):
     return (diff_norms / y_norms).sum()
 
 
+def _gradient_loss(pred, target, mask=None):
+    B, H, W, C = pred.shape
+    p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
+    sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                            dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                            dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
+    gx_p = F.conv2d(p, sobel_x, padding=1)
+    gy_p = F.conv2d(p, sobel_y, padding=1)
+    gx_t = F.conv2d(t, sobel_x, padding=1)
+    gy_t = F.conv2d(t, sobel_y, padding=1)
+    diff = (torch.abs(gx_p - gx_t) + torch.abs(gy_p - gy_t)).reshape(B, C, H, W).permute(0, 2, 3, 1)
+    if mask is not None:
+        mask_f = mask.expand_as(diff).float()
+        return (diff * mask_f).sum() / mask_f.sum().clamp(min=1.0)
+    return diff.mean()
+
+
 def _laplacian_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     lap = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]],
                        dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    lap_p = F.conv2d(p, lap, padding=1)
-    lap_t = F.conv2d(t, lap, padding=1)
-    diff = torch.abs(lap_p - lap_t)
+    diff = torch.abs(F.conv2d(p, lap, padding=1) - F.conv2d(t, lap, padding=1))
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mask_f = mask.expand_as(diff).float()
-        n_valid = mask_f.sum().clamp(min=1.0)
-        return (diff * mask_f).sum() / n_valid
+        return (diff * mask_f).sum() / mask_f.sum().clamp(min=1.0)
     return diff.mean()
 
 
@@ -79,21 +95,20 @@ def _fft_loss(pred, target):
     t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm='ortho')
     fft_t = torch.fft.rfft2(t, norm='ortho')
-    amp_diff = torch.abs(fft_p.abs() - fft_t.abs())
-    return amp_diff.mean().to(pred.dtype)
+    return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
+                 alpha=0.5, beta=0.15, delta=0.15, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
         scale_weights = [0.5, 0.3, 0.2]
 
     mask = _align_mask(mask, pred)
     B = pred.size(0)
-
     scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
+    loss_grad = pred.new_zeros(1).squeeze()
     loss_lap = pred.new_zeros(1).squeeze()
 
     for s, sw in zip(scales, scale_weights):
@@ -101,8 +116,8 @@ def sandbox_loss(pred, target, mask=None,
         t_s = _downsample(target, s)
         m_s = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(p_s, t_s, m_s)
+        loss_grad = loss_grad + sw * _gradient_loss(p_s, t_s, m_s) * B
         loss_lap = loss_lap + sw * _laplacian_loss(p_s, t_s, m_s) * B
 
     loss_fft = _fft_loss(pred, target) * B
-
-    return alpha * loss_rel + beta * loss_lap + gamma * loss_fft
+    return alpha * loss_rel + beta * loss_grad + delta * loss_lap + gamma * loss_fft
