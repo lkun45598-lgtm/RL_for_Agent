@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #47: multi-scale rel L2 + gradient + blended FFT (residual + amplitude-diff)
+@description Experiment #48: multi-scale rel L2 + gradient + masked residual FFT
     Same as exp#41 base (scale_weights=[0.5,0.3,0.2], alpha=0.5, beta=0.3, gamma=0.2)
-    FFT = 0.5 * residual_fft + 0.5 * amplitude_diff_fft
-    Tests if combining both FFT formulations helps.
-@version 1.47.0
+    but apply mask to residual before FFT: rfft2(mask * (pred - target)).abs().mean()
+    Focuses frequency-domain error on valid ocean pixels only.
+@version 1.48.0
 """
 
 import torch
@@ -67,14 +67,12 @@ def _gradient_loss(pred, target, mask=None):
     return diff.mean()
 
 
-def _fft_loss(pred, target):
-    p = pred.float().permute(0, 3, 1, 2)
-    t = target.float().permute(0, 3, 1, 2)
-    fft_p = torch.fft.rfft2(p, norm='ortho')
-    fft_t = torch.fft.rfft2(t, norm='ortho')
-    residual_fft = torch.fft.rfft2((pred - target).float().permute(0, 3, 1, 2), norm='ortho').abs().mean()
-    amp_diff_fft = torch.abs(fft_p.abs() - fft_t.abs()).mean()
-    return (0.5 * residual_fft + 0.5 * amp_diff_fft).to(pred.dtype)
+def _fft_loss(pred, target, mask=None):
+    residual = (pred - target).float()
+    if mask is not None:
+        residual = residual * mask.expand_as(residual).float()
+    r = residual.permute(0, 3, 1, 2)
+    return torch.fft.rfft2(r, norm='ortho').abs().mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
@@ -93,5 +91,5 @@ def sandbox_loss(pred, target, mask=None,
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
-    loss_fft = _fft_loss(pred, target) * B
+    loss_fft = _fft_loss(pred, target, mask) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
