@@ -59,3 +59,8 @@ bed3db9	0.6458	17.85	discard	exp#53: power-spectrum residual FFT (SwinIR=0.6458 
 bf321fa	0.6624	17.11	discard	exp#56: spectral amplitude matching FFT (SwinIR=0.6624 EDSR=0.6789 FNO2d=1.1015 UNet2d=1.2429) FNO2d/UNet2d diverged
 07fa21f	0.3691	12.74	discard	exp#57: relative gradient + residual FFT (SwinIR=0.3691 EDSR=0.4475 FNO2d=1.5565 UNet2d=1.2983) all diverged
 07a2edb	0.4525	14.21	discard	exp#58: rel L2 + SSIM + residual FFT (SwinIR=0.4525 EDSR=0.5877 FNO2d=1.3555 UNet2d=1.2321) all diverged
+62d1a20	0.6514	17.13	discard	exp#59: rel L2 + gradient + residual FFT + divergence regularizer delta=0.05 (SwinIR=0.6514)
+f214de7	0.6644	17.22	discard	exp#60: 4-scale [1,2,4,8] rel L2 + gradient + residual FFT (SwinIR=0.6644)
+08ab47f	0.6502	16.95	discard	exp#61: rel L2 + single-scale gradient + residual FFT (SwinIR=0.6502)
+3344022	0.6610	17.30	discard	exp#62: bilinear downsampling rel L2 + gradient + residual FFT (SwinIR=0.6610)
+267258a	0.6594	17.12	discard	exp#63: rel L2 + gradient + residual FFT, alpha=0.5 beta=0.35 gamma=0.15 (SwinIR=0.6594)
