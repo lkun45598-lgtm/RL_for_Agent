@@ -66,3 +66,5 @@ f214de7	0.6644	17.22	discard	exp#60: 4-scale [1,2,4,8] rel L2 + gradient + resid
 267258a	0.6594	17.12	discard	exp#63: rel L2 + gradient + residual FFT, alpha=0.5 beta=0.35 gamma=0.15 (SwinIR=0.6594)
 c37eccf	0.6635	17.13	discard	exp#64: rel L2 + gradient + residual FFT + vorticity delta=0.05 (SwinIR=0.6635)
 0d145ae	0.6555	17.09	discard	exp#65: rel L2 + gradient + residual FFT + vorticity delta=0.02 (SwinIR=0.6555)
+a89e612	0.2645	10.28	discard	exp#66: rel L2 + Laplacian + residual FFT (SwinIR=0.2645) catastrophic
+a13d8f7	0.6452	17.06	discard	exp#67: rel L2 + gradient L2 + residual FFT (SwinIR=0.6452)

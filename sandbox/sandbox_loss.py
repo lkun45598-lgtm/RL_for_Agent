@@ -1,10 +1,10 @@
 """
 @file sandbox_loss.py
-@description Experiment #67: multi-scale rel L2 + gradient L2 + residual FFT
-    Same as exp#41 but gradient diff uses L2 (squared) instead of L1 (abs).
-    Hypothesis: L2 gradient penalizes large errors more strongly.
+@description Experiment #68: multi-scale rel L2 + 5x5 Sobel gradient + residual FFT
+    Same as exp#41 but use 5x5 Sobel kernel for larger spatial context in gradient.
+    Hypothesis: larger receptive field captures coarser structural differences.
     alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.67.0
+@version 1.68.0
 """
 
 import torch
@@ -50,17 +50,21 @@ def _rel_l2(pred, target, mask=None):
     return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
 
 
-def _gradient_loss_l2(pred, target, mask=None):
+def _gradient_loss(pred, target, mask=None):
     B, H, W, C = pred.shape
     p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
     t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    # L2 on gradient differences instead of L1
-    diff = ((F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) ** 2 +
-            (F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)) ** 2)
+    # 5x5 Sobel kernels
+    sx = torch.tensor([
+        [-1, -2, 0, 2, 1],
+        [-4, -8, 0, 8, 4],
+        [-6, -12, 0, 12, 6],
+        [-4, -8, 0, 8, 4],
+        [-1, -2, 0, 2, 1],
+    ], dtype=pred.dtype, device=pred.device).view(1, 1, 5, 5)
+    sy = sx.transpose(2, 3)
+    diff = (torch.abs(F.conv2d(p, sx, padding=2) - F.conv2d(t, sx, padding=2)) +
+            torch.abs(F.conv2d(p, sy, padding=2) - F.conv2d(t, sy, padding=2)))
     diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
     if mask is not None:
         mf = mask.expand_as(diff).float()
@@ -89,6 +93,6 @@ def sandbox_loss(pred, target, mask=None,
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + sw * _gradient_loss_l2(ps, ts, ms) * B
+        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
