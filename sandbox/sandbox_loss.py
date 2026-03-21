@@ -1,9 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #60: multi-scale rel L2 + gradient + residual FFT, 4 scales [1,2,4,8]
-    Add scale=8 to exp#41. scale_weights=[0.4,0.3,0.2,0.1]
-    alpha=0.5, beta=0.3, gamma=0.2
-@version 1.60.0
+@description Experiment #61: multi-scale rel L2 + single-scale gradient (scale=1 only) + residual FFT
+    Same as exp#41 but gradient loss only computed at full resolution (scale=1).
+    Hypothesis: gradient at lower scales loses fine structure information.
+    alpha=0.5 (rel L2 multi-scale), beta=0.3 (gradient at scale=1 only), gamma=0.2 (residual FFT)
+    scale_weights=[0.5,0.3,0.2] for rel L2
+@version 1.61.0
 """
 
 import torch
@@ -77,17 +79,17 @@ def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
-        scale_weights = [0.4, 0.3, 0.2, 0.1]
+        scale_weights = [0.5, 0.3, 0.2]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
-    scales = [1, 2, 4, 8]
+    scales = [1, 2, 4]
     loss_rel = pred.new_zeros(1).squeeze()
-    loss_grad = pred.new_zeros(1).squeeze()
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
+    # Gradient loss only at full resolution
+    loss_grad = _gradient_loss(pred, target, mask) * B
     loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
