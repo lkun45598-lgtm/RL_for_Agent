@@ -1,13 +1,11 @@
 """
 @file sandbox_loss.py
-@description Experiment #31: multi-scale rel L2 + gradient + FFT, decoupled scale weights
-    Decouple scale weights for rel L2 and gradient:
-      rl2_scale_weights=[0.5, 0.3, 0.2]  (same as exp#13 best)
-      grad_scale_weights=[0.7, 0.2, 0.1] (gradient is fine-scale: weight scale-1 more)
-    Hypothesis: gradient edges are most meaningful at full resolution;
-    multi-scale rel L2 still benefits from coarse supervision.
-    alpha=0.5, beta=0.3, gamma=0.2, FFT at full scale only.
-@version 1.31.0
+@description Experiment #32: multi-scale rel L2 + gradient + complex FFT L1
+    Same as exp#13 (scale_weights=[0.5,0.3,0.2]) but replace FFT amplitude
+    difference with complex L1: mean(|fft_pred - fft_target|) which captures
+    both amplitude and phase without the phase-only collapse seen in exp#22.
+    alpha=0.5, beta=0.3, gamma=0.2
+@version 1.32.0
 """
 
 import torch
@@ -71,41 +69,30 @@ def _gradient_loss(pred, target, mask=None):
 
 
 def _fft_loss(pred, target):
+    """Complex FFT L1: mean |fft(pred) - fft(target)| captures amplitude+phase jointly."""
     p = pred.float().permute(0, 3, 1, 2)
     t = target.float().permute(0, 3, 1, 2)
     fft_p = torch.fft.rfft2(p, norm='ortho')
     fft_t = torch.fft.rfft2(t, norm='ortho')
-    return torch.abs(fft_p.abs() - fft_t.abs()).mean().to(pred.dtype)
+    # complex L1: magnitude of complex difference vector
+    return torch.abs(fft_p - fft_t).mean().to(pred.dtype)
 
 
 def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
-                 rl2_scale_weights=None, grad_scale_weights=None, **kwargs):
-    """
-    Decoupled scale weights for rel L2 and gradient losses.
-    rl2_scale_weights: per-scale weights for relative L2 at scales [1, 2, 4]
-    grad_scale_weights: per-scale weights for gradient loss at scales [1, 2, 4]
-    FFT applied only at full scale.
-    """
-    if rl2_scale_weights is None:
-        rl2_scale_weights = [0.5, 0.3, 0.2]
-    if grad_scale_weights is None:
-        grad_scale_weights = [0.7, 0.2, 0.1]
-
+                 scale_weights=None, **kwargs):
+    if scale_weights is None:
+        scale_weights = [0.5, 0.3, 0.2]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = [1, 2, 4]
-
     loss_rel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
-
-    for s, rl2_w, grad_w in zip(scales, rl2_scale_weights, grad_scale_weights):
+    for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
-        loss_rel = loss_rel + rl2_w * _rel_l2(ps, ts, ms)
-        loss_grad = loss_grad + grad_w * _gradient_loss(ps, ts, ms) * B
-
+        loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
+        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
     loss_fft = _fft_loss(pred, target) * B
-
     return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
