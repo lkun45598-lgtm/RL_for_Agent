@@ -1,11 +1,10 @@
 """
 @file sandbox_loss.py
 
-@description Experiment #15: multi-scale rel L2 + gradient + FFT
-    Same as exp#13 but scale_weights=[0.7, 0.2, 0.1] — heavier emphasis
-    on full-resolution to see if coarse scales are hurting.
+@description Experiment #16: multi-scale rel L2 + gradient + FFT
+    Same as exp#13 but scale_weights=[0.4, 0.35, 0.25] — more weight on coarser scales.
     alpha=0.5 (rel L2), beta=0.3 (gradient), gamma=0.2 (FFT)
-@version 1.15.0
+@version 1.16.0
 """
 
 import torch
@@ -27,6 +26,7 @@ def _align_mask(mask, pred):
 def _downsample(x, scale):
     if scale == 1:
         return x
+    B, H, W, C = x.shape
     t = x.permute(0, 3, 1, 2)
     t = F.avg_pool2d(t, kernel_size=scale, stride=scale)
     return t.permute(0, 2, 3, 1)
@@ -91,7 +91,7 @@ def sandbox_loss(pred, target, mask=None,
                  scale_weights=None, **kwargs):
     """
     Multi-scale Relative L2 + Sobel gradient + FFT.
-    scale_weights=[0.7, 0.2, 0.1] for scales [1, 1/2, 1/4].
+    scale_weights=[0.4, 0.35, 0.25] — more emphasis on coarser scales.
 
     Args:
         pred:   [B, H, W, C]
@@ -100,9 +100,10 @@ def sandbox_loss(pred, target, mask=None,
         alpha:  rel L2 weight
         beta:   gradient weight
         gamma:  FFT weight
+        scale_weights: weights per scale [1x, 1/2x, 1/4x]
     """
     if scale_weights is None:
-        scale_weights = [0.7, 0.2, 0.1]
+        scale_weights = [0.4, 0.35, 0.25]
 
     mask = _align_mask(mask, pred)
     B = pred.size(0)
