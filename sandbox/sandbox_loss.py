@@ -1,9 +1,9 @@
 """
 @file sandbox_loss.py
-@description Experiment #45: multi-scale rel L2 + gradient + residual FFT, scale_weights=[0.6,0.25,0.15]
+@description Experiment #46: residual FFT + scale_weights=[0.55,0.28,0.17]
     Same as exp#41 (residual FFT, alpha=0.5, beta=0.3, gamma=0.2)
-    but shift more weight to fine scale: scale_weights=[0.6,0.25,0.15]
-@version 1.45.0
+    but slightly shift scale weights toward fine scale.
+@version 1.46.0
 """
 
 import torch
@@ -75,7 +75,7 @@ def sandbox_loss(pred, target, mask=None,
                  alpha=0.5, beta=0.3, gamma=0.2,
                  scale_weights=None, **kwargs):
     if scale_weights is None:
-        scale_weights = [0.6, 0.25, 0.15]
+        scale_weights = [0.55, 0.28, 0.17]
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = [1, 2, 4]
