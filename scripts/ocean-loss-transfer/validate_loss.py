@@ -132,7 +132,8 @@ def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
     shutil.copy(loss_file_path, target_loss)
 
     # 运行训练
-    cmd = f'cd {sandbox_dir} && CUDA_VISIBLE_DEVICES={gpu_id} /home/lz/miniconda3/envs/pytorch/bin/python _run_once.py --config configs/swinir.yaml'
+    project_root = Path(__file__).parent.parent.parent
+    cmd = f'cd {sandbox_dir} && PYTHONPATH={project_root}/scripts/ocean-SR-training-masked:$PYTHONPATH CUDA_VISIBLE_DEVICES={gpu_id} /home/lz/miniconda3/envs/pytorch/bin/python _run_once.py --config configs/swinir.yaml'
 
     try:
         result = subprocess.run(
