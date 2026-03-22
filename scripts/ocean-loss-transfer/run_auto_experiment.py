@@ -63,8 +63,7 @@ def run_auto_experiment(
     
     # Step 2: 检查兼容性
     print(f"\n[2/4] Checking compatibility...")
-    data = yaml.safe_load(Path(loss_ir_path).read_text())
-    loss_ir = LossIR(**data)
+    loss_ir = LossIR.from_yaml(loss_ir_path)
     compat = check_compatibility(loss_ir)
     print(f"  → Status: {compat['status']}")
     

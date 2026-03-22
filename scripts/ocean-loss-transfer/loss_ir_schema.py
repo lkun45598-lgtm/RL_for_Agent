@@ -17,11 +17,11 @@ class LossComponent:
     name: str
     type: str  # pixel_loss | gradient_loss | frequency_loss | ...
     weight: float
-    formula: str
     implementation: Dict[str, Any]
-    code_evidence: Dict[str, Any]
     required_tensors: List[str]
     required_imports: List[str]
+    formula: str = ""
+    code_evidence: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
