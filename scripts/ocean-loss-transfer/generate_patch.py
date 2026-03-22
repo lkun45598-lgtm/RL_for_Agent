@@ -74,3 +74,24 @@ def generate_patch_from_ir(
             'weights': {'alpha': alpha, 'beta': beta, 'gamma': gamma}
         }
     }
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--loss_ir_path', required=True)
+    parser.add_argument('--output_file', required=True)
+    parser.add_argument('--patch_type', default='faithful_core')
+    args = parser.parse_args()
+
+    with open(args.loss_ir_path) as f:
+        ir_dict = yaml.safe_load(f)
+
+    class SimpleIR:
+        def __init__(self, d):
+            self.metadata = d.get('metadata', {})
+
+    loss_ir = SimpleIR(ir_dict)
+    patch_spec = {'pixel_variant': 'rel_l2', 'gradient_variant': 'sobel_3x3', 'fft_variant': 'residual_rfft2_abs'}
+    result = generate_patch_from_ir(loss_ir, patch_spec, args.output_file)
+    print(f"Generated {len(result['code'])} chars")
