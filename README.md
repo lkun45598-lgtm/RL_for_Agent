@@ -59,6 +59,18 @@ npm run dev
 
 服务将在 `http://localhost:8787` 启动。
 
+## Loss Transfer (论文 Loss 迁移)
+
+自动从论文代码迁移 loss 函数:
+
+```bash
+python scripts/ocean-loss-transfer/run_auto_experiment.py \
+  --paper_slug paper_name \
+  --code_repo path/to/code
+```
+
+结果: `sandbox/loss_transfer_experiments/{paper_slug}/summary.yaml`
+
 ## API 接口
 
 ### 1. 健康检查

@@ -1,0 +1,34 @@
+# Target Interface Specification for sandbox_loss.py
+version: "1.0.0"
+last_updated: "2026-03-22"
+
+interface:
+  function_name: "sandbox_loss"
+  signature: "sandbox_loss(pred, target, mask=None, **kwargs)"
+  
+  input_tensors:
+    pred:
+      shape: "[B, H, W, 2]"
+      layout: "BHWC"
+      dtype: "torch.float32 or torch.float16"
+    target:
+      shape: "[B, H, W, 2]"
+      layout: "BHWC"
+    mask:
+      shape: "[B, H, W, 1]"
+      layout: "BHWC"
+      dtype: "torch.bool"
+      required: false
+  
+  output:
+    type: "torch.Tensor"
+    shape: "scalar"
+
+constraints:
+  allowed_imports: ["torch", "torch.nn.functional", "math"]
+  layout_constraint: "BHWC"
+
+current_best:
+  experiment: "exp#71"
+  commit: "084d98d"
+  swinir_ssim: 0.6645

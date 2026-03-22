@@ -1,0 +1,123 @@
+# Patch Type Registry - 所有支持的 loss 组件变体
+version: "1.0.0"
+source: "71 experiments + blocked_patterns.yaml"
+last_updated: "2026-03-22"
+
+categories:
+  - name: "replace_pixel_loss"
+    description: "替换像素级 loss 函数"
+    variants:
+      - id: "rel_l2"
+        name: "Relative L2"
+        risk: "baseline"
+        experiments: ["exp#41", "exp#71"]
+        
+      - id: "abs_l1"
+        name: "Absolute L1"
+        risk: "low"
+        
+      - id: "smooth_l1"
+        name: "Smooth L1 (Huber)"
+        risk: "low"
+        
+      - id: "charbonnier"
+        name: "Charbonnier Loss"
+        risk: "medium"
+        note: "FNO2d/UNet2d 敏感"
+        experiments: ["exp#2", "exp#54"]
+
+  - name: "replace_gradient_operator"
+    description: "替换梯度算子"
+    variants:
+      - id: "sobel_3x3"
+        name: "Sobel 3x3"
+        risk: "baseline"
+        
+      - id: "scharr_3x3"
+        name: "Scharr 3x3"
+        risk: "low"
+        
+      - id: "prewitt_3x3"
+        name: "Prewitt 3x3"
+        risk: "low"
+        
+      - id: "sobel_5x5"
+        name: "Sobel 5x5"
+        risk: "BLOCKED"
+        reason: "性能下降"
+        experiments: ["exp#38", "exp#68"]
+        
+      - id: "laplacian"
+        name: "Laplacian"
+        risk: "BLOCKED"
+        reason: "崩溃"
+        experiments: ["exp#20", "exp#40", "exp#66"]
+
+  - name: "replace_frequency_loss"
+    description: "替换频域 loss"
+    variants:
+      - id: "residual_rfft2_abs"
+        name: "Residual FFT"
+        risk: "baseline"
+        experiments: ["exp#41", "exp#71"]
+        
+      - id: "amplitude_diff"
+        name: "Amplitude Difference"
+        risk: "low"
+        
+      - id: "complex_l1"
+        name: "Complex L1"
+        risk: "low"
+        experiments: ["exp#32"]
+        
+      - id: "relative_fft"
+        name: "Relative FFT"
+        risk: "BLOCKED"
+        reason: "除法不稳定"
+        experiments: ["exp#36"]
+        
+      - id: "power_spectrum"
+        name: "Power Spectrum"
+        risk: "BLOCKED"
+        reason: "FNO2d/UNet2d 爆炸"
+        experiments: ["exp#53"]
+
+  - name: "change_multi_scale_strategy"
+    description: "改变多尺度策略"
+    variants:
+      - id: "avg_pool_3scale"
+        name: "AvgPool [1,2,4]"
+        risk: "baseline"
+        scales: [1, 2, 4]
+        
+      - id: "bilinear_multiscale"
+        name: "Bilinear Downsample"
+        risk: "low"
+        
+      - id: "4scale_with_8"
+        name: "4-scale [1,2,4,8]"
+        risk: "BLOCKED"
+        reason: "scale=8 太粗糙"
+        experiments: ["exp#37", "exp#60"]
+
+  - name: "change_mask_handling"
+    description: "改变 mask 处理方式"
+    variants:
+      - id: "multiply_mask"
+        name: "Element-wise Multiply"
+        risk: "baseline"
+        
+      - id: "index_mask"
+        name: "Boolean Indexing"
+        risk: "low"
+
+  - name: "add_component"
+    description: "添加新的 loss 组件"
+    variants:
+      - id: "vorticity"
+        name: "Vorticity Loss"
+        risk: "low"
+        
+      - id: "divergence"
+        name: "Divergence Loss"
+        risk: "low"

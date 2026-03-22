@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an AI Agent HTTP service built on top of the KODE SDK (@shareai-lab/kode-sdk). It provides a RESTful API with SSE (Server-Sent Events) streaming for AI-powered coding assistance and question answering. The service specializes in ocean data preprocessing and super-resolution model training, converting NC (NetCDF) format to NPY format and managing GPU-based training jobs.
+This is an AI Agent HTTP service built on top of the KODE SDK (@shareai-lab/kode-sdk). It provides a RESTful API with SSE (Server-Sent Events) streaming for AI-powered coding assistance and question answering. The service specializes in:
 
-**Tech Stack**: Node.js (>=20.18.1), TypeScript, Express, KODE SDK v2.7.2
+1. **Ocean Data Preprocessing**: Converting NC (NetCDF) format to NPY format
+2. **Super-Resolution Model Training**: Managing GPU-based training jobs for 4 models (SwinIR, EDSR, FNO2d, UNet2d)
+3. **Loss Transfer System**: Automatically migrating loss functions from research papers to the training pipeline
+
+**Tech Stack**: Node.js (>=20.18.1), TypeScript, Express, KODE SDK v2.7.2, Python 3.10+
 
 ## Development Commands
 
@@ -64,8 +68,23 @@ PYTHON3=/home/lz/miniconda3/envs/pytorch/bin/python  # Optional: Python executab
 - Health check: `GET /health`
 
 **Tool Domains** (registered in `src/tools/index.ts`):
-- `ocean-SR-data-preprocess/`: inspect, validate, convert NPY, downsample, visualize, metrics, full-pipeline (4-stage forced confirmation workflow)
+- `ocean-SR-data-preprocess/`: inspect, validate, convert NPY, downsample, visualize, metrics, full-pipeline
 - `ocean-SR-training/`: GPU check, model list, train start/status, report, visualize
+- `ocean-loss-transfer/`: extract Loss IR, validate loss, orchestrate 5-trial experiments
+
+## Loss Transfer System
+
+自动迁移论文 loss 到 `sandbox/sandbox_loss.py`:
+
+```bash
+python scripts/ocean-loss-transfer/run_auto_experiment.py \
+  --paper_slug paper_name \
+  --code_repo path/to/code
+```
+
+- 4层验证 (static → smoke → single → full)
+- 自动拦截已知失败模式
+- 成功后自动 git push
 
 ## Important Notes
 

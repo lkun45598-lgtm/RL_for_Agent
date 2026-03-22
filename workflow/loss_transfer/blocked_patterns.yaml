@@ -1,0 +1,107 @@
+# Blocked Patterns - 从 71 次实验中提炼的已知失败模式
+# 这些模式会在代码生成前被硬拦截
+
+version: "1.0.0"
+source: "sandbox/results.tsv (71 experiments)"
+last_updated: "2026-03-22"
+
+blocked_components:
+  - name: "SSIM_loss"
+    keyword: "ssim"
+    reason: "完全崩溃"
+    experiments: ["exp#11", "exp#58"]
+    evidence:
+      - "exp#11: SSIM=0.109 (baseline=0.6116)"
+      - "exp#58: SSIM=0.4525, 所有模型发散"
+    action: "REJECT"
+    fix_hint: "移除 SSIM loss，使用 L1/L2/gradient 替代"
+
+  - name: "Laplacian_operator"
+    keyword: "laplacian"
+    reason: "导致崩溃或严重性能下降"
+    experiments: ["exp#20", "exp#40", "exp#66"]
+    evidence:
+      - "exp#20: SSIM=0.439"
+      - "exp#40: SSIM=0.6349 (tiny Laplacian delta=0.02)"
+      - "exp#66: SSIM=0.2645 (catastrophic)"
+    action: "REJECT"
+    fix_hint: "移除 Laplacian，使用 Sobel/Scharr gradient 替代"
+
+  - name: "relative_gradient"
+    keyword: "relative.*gradient|gradient.*relative"
+    reason: "所有模型发散"
+    experiments: ["exp#19", "exp#57"]
+    evidence:
+      - "exp#19: SSIM=0.436"
+      - "exp#57: SSIM=0.3691, 所有模型发散"
+    action: "REJECT"
+    fix_hint: "使用绝对 gradient，不要做相对归一化"
+
+  - name: "relative_FFT"
+    keyword: "relative.*fft|fft.*relative|fft.*div"
+    reason: "除法不稳定导致崩溃"
+    experiments: ["exp#36"]
+    evidence:
+      - "exp#36: SSIM=0.088 (division instability)"
+    action: "REJECT"
+    fix_hint: "使用 residual FFT (pred-target) 或 amplitude diff，不要做除法"
+
+  - name: "power_spectrum_FFT"
+    keyword: "power.*spectrum|spectrum.*power"
+    reason: "FNO2d/UNet2d 爆炸"
+    experiments: ["exp#53"]
+    evidence:
+      - "exp#53: FNO2d=1.0138, UNet2d=1.2428 (blew up)"
+    action: "REJECT"
+    fix_hint: "使用 magnitude FFT，不要用 power spectrum"
+
+  - name: "sobel_5x5"
+    keyword: "sobel.*5|5.*sobel"
+    reason: "性能下降"
+    experiments: ["exp#38", "exp#68"]
+    evidence:
+      - "exp#38: SSIM=0.6395 (vs baseline 0.6645)"
+      - "exp#68: SSIM=0.6378"
+    action: "WARN"
+    fix_hint: "使用 Sobel 3x3 或 Scharr 3x3"
+
+  - name: "Charbonnier_primary"
+    keyword: "charbonnier"
+    reason: "FNO2d/UNet2d 敏感，容易发散"
+    experiments: ["exp#2", "exp#54"]
+    evidence:
+      - "exp#2: SSIM=0.5960"
+      - "exp#54: FNO2d=1.2933, UNet2d=1.2653 (diverged)"
+    action: "WARN"
+    fix_hint: "Charbonnier 可以作为辅助，但不要作为主 loss；或降低权重"
+
+blocked_scales:
+  - scales: [1, 2, 4, 8]
+    keyword: "scale.*8|8.*scale"
+    reason: "scale=8 太粗糙，性能下降"
+    experiments: ["exp#37", "exp#60"]
+    evidence:
+      - "exp#37: SSIM=0.6156 (4-scale with 8)"
+      - "exp#60: SSIM=0.6644 (barely same as baseline)"
+    action: "REJECT"
+    fix_hint: "使用 scales=[1,2,4]，不要加 scale=8"
+
+safe_patterns:
+  - name: "relative_l2"
+    description: "相对 L2 范数 (当前 baseline)"
+    experiments: ["baseline", "exp#41"]
+    ssim: 0.6645
+
+  - name: "sobel_3x3_gradient"
+    description: "Sobel 3x3 梯度"
+    experiments: ["exp#7", "exp#41"]
+    ssim: 0.6645
+
+  - name: "residual_fft"
+    description: "残差 FFT (pred-target)"
+    experiments: ["exp#41"]
+    ssim: 0.6645
+
+  - name: "scharr_3x3_gradient"
+    description: "Scharr 3x3 梯度 (未测试但理论安全)"
+    similar_to: "sobel_3x3_gradient"

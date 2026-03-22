@@ -1,0 +1,11 @@
+innovations:
+- component_type: frequency_loss
+  date: '2026-03-22T15:59:28.940451'
+  id: inn_001
+  improvement: 0.0021
+  key_idea: residual FFT
+  paper: exp#41
+  tags:
+  - frequency
+  - fft
+  - residual

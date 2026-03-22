@@ -1,0 +1,7 @@
+{
+  "name": "ocean-loss-transfer",
+  "version": "1.0.0",
+  "description": "从论文迁移 loss 函数到 sandbox_loss.py",
+  "author": "Leizheng",
+  "tags": ["loss", "transfer", "ocean", "super-resolution"]
+}
