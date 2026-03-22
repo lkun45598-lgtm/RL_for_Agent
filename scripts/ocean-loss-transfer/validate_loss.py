@@ -129,7 +129,10 @@ def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
     # 复制 loss 文件到 sandbox/
     sandbox_dir = Path(__file__).parent.parent.parent / 'sandbox'
     target_loss = sandbox_dir / 'sandbox_loss.py'
-    shutil.copy(loss_file_path, target_loss)
+
+    # 只在文件不同时复制
+    if Path(loss_file_path).resolve() != target_loss.resolve():
+        shutil.copy(loss_file_path, target_loss)
 
     # 运行训练
     project_root = Path(__file__).parent.parent.parent
