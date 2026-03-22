@@ -40,9 +40,12 @@ def run_single_trial(
     
     validation_results = {}
     layer_stopped = None
-    
+
+    # 获取绝对路径
+    validator_script = Path(__file__).parent / 'validate_loss.py'
+
     # 2. Layer 1: Static
-    cmd = f'/home/lz/miniconda3/envs/pytorch/bin/python scripts/ocean-loss-transfer/validate_loss.py --loss_file {temp_loss_file} --mode static'
+    cmd = f'/home/lz/miniconda3/envs/pytorch/bin/python {validator_script} --loss_file {temp_loss_file} --mode static'
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
     if not result.stdout.strip():
@@ -61,7 +64,7 @@ def run_single_trial(
         return {'passed': False, 'layer_stopped': layer_stopped, 'validation': validation_results}
     
     # 3. Layer 2: Smoke
-    cmd = f'/home/lz/miniconda3/envs/pytorch/bin/python scripts/ocean-loss-transfer/validate_loss.py --loss_file {temp_loss_file} --mode smoke'
+    cmd = f'/home/lz/miniconda3/envs/pytorch/bin/python {validator_script} --loss_file {temp_loss_file} --mode smoke'
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     layer2 = json.loads(result.stdout)
     validation_results['layer2'] = layer2
@@ -72,7 +75,7 @@ def run_single_trial(
         return {'passed': False, 'layer_stopped': layer_stopped, 'validation': validation_results}
     
     # 4. Layer 3: Single Model
-    cmd = f'/home/lz/miniconda3/envs/pytorch/bin/python scripts/ocean-loss-transfer/validate_loss.py --loss_file {temp_loss_file} --mode single'
+    cmd = f'/home/lz/miniconda3/envs/pytorch/bin/python {validator_script} --loss_file {temp_loss_file} --mode single'
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
     layer3 = json.loads(result.stdout)
     validation_results['layer3'] = layer3

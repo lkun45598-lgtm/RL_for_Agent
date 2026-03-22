@@ -48,19 +48,19 @@ def check_blocked_patterns(loss_ir: LossIR) -> Dict[str, Any]:
     """检查是否匹配已知失败模式"""
     blocked = load_blocked_patterns()
     warnings = []
-    
+
     for comp in loss_ir.components:
-        comp_type = comp.get('type', '')
-        comp_name = comp.get('name', '').lower()
-        
+        comp_type = comp.type
+        comp_name = comp.name.lower()
+
         # 检查 SSIM
         if 'ssim' in comp_name or comp_type == 'structural_loss':
             warnings.append(f"SSIM loss 已知会崩溃 (exp#11)")
-        
+
         # 检查 Laplacian
         if 'laplacian' in comp_name:
             warnings.append(f"Laplacian 已知会崩溃 (exp#20,#40,#66)")
-    
+
     return {'warnings': warnings}
 
 

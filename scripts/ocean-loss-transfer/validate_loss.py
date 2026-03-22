@@ -129,10 +129,14 @@ def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
     # 复制 loss 文件到 sandbox/
     sandbox_dir = Path(__file__).parent.parent.parent / 'sandbox'
     target_loss = sandbox_dir / 'sandbox_loss.py'
-    shutil.copy(loss_file_path, target_loss)
+
+    # 只在文件不同时复制
+    if Path(loss_file_path).resolve() != target_loss.resolve():
+        shutil.copy(loss_file_path, target_loss)
 
     # 运行训练
-    cmd = f'cd {sandbox_dir} && CUDA_VISIBLE_DEVICES={gpu_id} /home/lz/miniconda3/envs/pytorch/bin/python _run_once.py --config configs/swinir.yaml'
+    project_root = Path(__file__).parent.parent.parent
+    cmd = f'cd {sandbox_dir} && PYTHONPATH={project_root}/scripts/ocean-SR-training-masked:$PYTHONPATH CUDA_VISIBLE_DEVICES={gpu_id} /home/lz/miniconda3/envs/pytorch/bin/python _run_once.py --config configs/swinir.yaml'
 
     try:
         result = subprocess.run(
