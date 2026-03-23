@@ -10,12 +10,21 @@ import os
 import json
 import requests
 from typing import Dict, Any
+from pathlib import Path
+
+# 加载 .env 文件
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent.parent.parent / '.env'
+    load_dotenv(env_path)
+except ImportError:
+    pass  # dotenv 不是必需的
 
 
 def call_llm(prompt: str) -> str:
     """调用 LLM API"""
     api_key = os.getenv('ANTHROPIC_API_KEY')
-    base_url = os.getenv('ANTHROPIC_BASE_URL', 'https://yunwu.ai')
+    base_url = os.getenv('ANTHROPIC_BASE_URL', 'https://node-hk.sssaicode.com/api')
     model = os.getenv('ANTHROPIC_MODEL_ID', 'claude-sonnet-4-5-20250929')
     
     url = f"{base_url}/v1/messages"
@@ -32,7 +41,12 @@ def call_llm(prompt: str) -> str:
     }
     
     response = requests.post(url, headers=headers, json=data, timeout=60)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print(f"API Error: {e}")
+        print(f"Response: {response.text[:500]}")
+        raise
     return response.json()['content'][0]['text']
 
 
