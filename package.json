@@ -1,0 +1,39 @@
+{
+  "name": "ocean-agent",
+  "version": "1.0.0",
+  "description": "AI Agent HTTP Service powered by KODE SDK",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx tsx src/server.ts",
+    "dev": "npx tsx watch src/server.ts",
+    "test:client": "npx tsx tests/test-client.ts",
+    "typecheck": "npx tsc --noEmit"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "kode-sdk",
+    "anthropic",
+    "claude"
+  ],
+  "author": "Leizheng, Kongzhiquan",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "dependencies": {
+    "@shareai-lab/kode-sdk": "^2.7.2",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.1.0",
+    "jest": "^30.2.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}
