@@ -41,7 +41,12 @@ def call_llm(prompt: str) -> str:
     }
     
     response = requests.post(url, headers=headers, json=data, timeout=60)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print(f"API Error: {e}")
+        print(f"Response: {response.text[:500]}")
+        raise
     return response.json()['content'][0]['text']
 
 
