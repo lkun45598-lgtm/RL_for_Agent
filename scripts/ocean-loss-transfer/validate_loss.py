@@ -2,8 +2,14 @@
 @file validate_loss.py
 @description 4层渐进式验证器
 @author Leizheng
+@contributors kongzhiquan
 @date 2026-03-22
-@version 1.0.0
+@version 1.2.0
+
+@changelog
+  - 2026-03-22 Leizheng: v1.0.0 initial version
+  - 2026-03-23 kongzhiquan: v1.1.0 refine type annotations, use ValidationResult TypedDict, fix bare except
+  - 2026-03-23 kongzhiquan: v1.2.0 use find_first_python_path instead of hardcoded path
 """
 
 import ast
@@ -15,9 +21,15 @@ import subprocess
 import re
 import traceback
 from pathlib import Path
+from typing import Dict, List, Optional
+sys.path.append(str(Path(__file__).parent.parent))  # 添加上层目录（scripts）到路径，以便导入 python_manager
+from python_manager import find_first_python_path
+from _types import ValidationResult, TrainingMetrics
+
+_PYTHON = find_first_python_path() or 'python3'
 
 
-def validate_static(loss_file_path: str) -> dict:
+def validate_static(loss_file_path: str) -> ValidationResult:
     """
     Layer 1: 静态检查 (<1s)
     - 语法检查
@@ -59,7 +71,7 @@ def validate_static(loss_file_path: str) -> dict:
                 }
 
     # 3. 函数签名检查
-    sandbox_loss_func = None
+    sandbox_loss_func: Optional[ast.FunctionDef] = None
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == 'sandbox_loss':
             sandbox_loss_func = node
@@ -73,7 +85,7 @@ def validate_static(loss_file_path: str) -> dict:
         }
 
     args = sandbox_loss_func.args
-    arg_names = [a.arg for a in args.args]
+    arg_names: List[str] = [a.arg for a in args.args]
     if 'pred' not in arg_names or 'target' not in arg_names:
         return {
             'passed': False,
@@ -82,7 +94,7 @@ def validate_static(loss_file_path: str) -> dict:
         }
 
     # 4. 禁止模式
-    forbidden = [
+    forbidden: List[tuple[str, str]] = [
         ('open(', 'file_io'),
         ('subprocess', 'subprocess'),
         ('__import__', 'dynamic_import'),
@@ -117,7 +129,7 @@ def validate_static(loss_file_path: str) -> dict:
     return {'passed': True}
 
 
-def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
+def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> ValidationResult:
     """
     Layer 3: Single Model (2-5min)
     - 真实数据，完整 15 epochs
@@ -136,7 +148,7 @@ def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
 
     # 运行训练
     project_root = Path(__file__).parent.parent.parent
-    cmd = f'cd {sandbox_dir} && PYTHONPATH={project_root}/scripts/ocean-SR-training-masked:$PYTHONPATH CUDA_VISIBLE_DEVICES={gpu_id} /home/lz/miniconda3/envs/pytorch/bin/python _run_once.py --config configs/swinir.yaml'
+    cmd = f'cd {sandbox_dir} && PYTHONPATH={project_root}/scripts/ocean-SR-training-masked:$PYTHONPATH CUDA_VISIBLE_DEVICES={gpu_id} {_PYTHON} _run_once.py --config configs/swinir.yaml'
 
     try:
         result = subprocess.run(
@@ -180,14 +192,20 @@ def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
     # 解析指标
     stdout = result.stdout
     try:
-        val_ssim = float(re.search(r'val_ssim:\s+([\d.]+)', stdout).group(1))
-        val_psnr = float(re.search(r'val_psnr:\s+([\d.]+)', stdout).group(1))
-    except:
+        ssim_match = re.search(r'val_ssim:\s+([\d.]+)', stdout)
+        psnr_match = re.search(r'val_psnr:\s+([\d.]+)', stdout)
+        if not ssim_match or not psnr_match:
+            raise ValueError("Missing val_ssim or val_psnr in output")
+        val_ssim = float(ssim_match.group(1))
+        val_psnr = float(psnr_match.group(1))
+    except (ValueError, AttributeError) as e:
         return {
             'passed': False,
             'error': 'parse_failed',
-            'detail': '无法解析输出指标'
+            'detail': f'无法解析输出指标: {e}'
         }
+
+    metrics: TrainingMetrics = {'val_ssim': val_ssim, 'val_psnr': val_psnr}
 
     # 检查 SSIM
     if val_ssim < 0.3:
@@ -195,20 +213,17 @@ def validate_single_model(loss_file_path: str, gpu_id: int = 4) -> dict:
             'passed': False,
             'error': 'ssim_collapse',
             'detail': f'SSIM={val_ssim:.4f} 太低',
-            'metrics': {'val_ssim': val_ssim, 'val_psnr': val_psnr},
+            'metrics': metrics,
             'fix_hint': '检查是否使用了已知失败组件'
         }
 
     return {
         'passed': True,
-        'metrics': {
-            'val_ssim': val_ssim,
-            'val_psnr': val_psnr
-        }
+        'metrics': metrics
     }
 
 
-def validate_smoke(loss_file_path: str) -> dict:
+def validate_smoke(loss_file_path: str) -> ValidationResult:
     """
     Layer 2: Smoke Test (<10s)
     - 动态导入
@@ -218,8 +233,14 @@ def validate_smoke(loss_file_path: str) -> dict:
     # 动态导入
     try:
         spec = importlib.util.spec_from_file_location("test_loss", loss_file_path)
+        if spec is None or spec.loader is None:
+            return {
+                'passed': False,
+                'error': 'import_failed',
+                'detail': f'Cannot create module spec from {loss_file_path}'
+            }
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
         sandbox_loss = mod.sandbox_loss
     except Exception as e:
         return {
@@ -312,7 +333,10 @@ def validate_smoke(loss_file_path: str) -> dict:
         }
 
 
-def validate_full_run(loss_file_path: str, baseline_thresholds: dict = None) -> dict:
+def validate_full_run(
+    loss_file_path: str,
+    baseline_thresholds: Optional[Dict[str, float]] = None
+) -> ValidationResult:
     """
     Layer 4: Full Run (5-10min)
     - 4 模型并行训练
@@ -341,14 +365,15 @@ def validate_full_run(loss_file_path: str, baseline_thresholds: dict = None) -> 
         return {'passed': False, 'error': 'crash', 'detail': result.stderr[-500:]}
 
     # 解析 4 个模型的结果 (从日志文件读取)
-    metrics = {}
-    for model in ['SwinIR', 'EDSR', 'FNO2d', 'UNet2d']:
+    metrics: TrainingMetrics = {}
+    model_names: List[str] = ['SwinIR', 'EDSR', 'FNO2d', 'UNet2d']
+    for model in model_names:
         log_file = sandbox_dir / f'run_{model}.log'
         if log_file.exists():
             log_content = log_file.read_text()
             ssim_match = re.search(r'val_ssim:\s+([\d.]+)', log_content)
             if ssim_match:
-                metrics[model.lower()] = float(ssim_match.group(1))
+                metrics[model.lower()] = float(ssim_match.group(1))  # type: ignore[literal-required]
 
     if len(metrics) < 4:
         return {'passed': False, 'error': 'parse_failed', 'detail': f'只解析到 {len(metrics)} 个模型', 'metrics': metrics}
@@ -360,7 +385,8 @@ def validate_full_run(loss_file_path: str, baseline_thresholds: dict = None) -> 
     # 如果有基线阈值,比对
     if baseline_thresholds:
         swinir_baseline = baseline_thresholds.get('swinir_mean', 0.6645)
-        if metrics['swinir'] < swinir_baseline - 0.01:
+        swinir_ssim = metrics.get('swinir', 0)  # type: ignore[arg-type]
+        if swinir_ssim < swinir_baseline - 0.01:
             return {'passed': False, 'error': 'below_baseline', 'metrics': metrics}
 
     return {'passed': True, 'metrics': metrics}
@@ -373,6 +399,7 @@ if __name__ == '__main__':
     parser.add_argument('--mode', default='static')
     args = parser.parse_args()
 
+    result: ValidationResult
     if args.mode == 'static':
         result = validate_static(args.loss_file)
     elif args.mode == 'smoke':
@@ -382,6 +409,6 @@ if __name__ == '__main__':
     elif args.mode == 'full':
         result = validate_full_run(args.loss_file)
     else:
-        result = {'error': f'Unknown mode: {args.mode}'}
+        result = {'passed': False, 'error': f'Unknown mode: {args.mode}'}
 
     print(json.dumps(result))

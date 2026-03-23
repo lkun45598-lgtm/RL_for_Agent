@@ -7,11 +7,13 @@
  * @changelog
  *   - 2026-03-23 kongzhiquan: 修复 defineTool 参数格式：parameters+Zod → params 简洁对象，execute → exec；
  *                           修复 ctx.sandbox.exec 调用为字符串形式
+ *   - 2026-03-23 kongzhiquan: 修复 sys.path 使用相对路径导致 ModuleNotFoundError 的问题，改为绝对路径
  */
 
 import { defineTool } from '@shareai-lab/kode-sdk';
 import { findFirstPythonPath } from '@/utils/python-manager';
 import { shellEscapeDouble } from '@/utils/shell';
+import path from 'node:path';
 
 export const oceanLossTransferExtract = defineTool({
   name: 'ocean_loss_transfer_extract',
@@ -24,10 +26,11 @@ export const oceanLossTransferExtract = defineTool({
     manual_mode: { type: 'boolean', description: '手动模式(生成模板)', required: false }
   },
 
-  exec: async (args, ctx) => {
+  async exec(args, ctx) {
     const pythonPath = await findFirstPythonPath();
     if (!pythonPath) throw new Error('未找到可用的Python解释器');
     const python = `"${shellEscapeDouble(pythonPath)}"`;
+    const scriptsDir = shellEscapeDouble(path.resolve(process.cwd(), 'scripts/ocean-loss-transfer'));
 
     const paperArg = args.paper_pdf_path ? `'${shellEscapeDouble(args.paper_pdf_path)}'` : 'None';
     const repoArg = args.code_repo_path ? `'${shellEscapeDouble(args.code_repo_path)}'` : 'None';
@@ -35,8 +38,8 @@ export const oceanLossTransferExtract = defineTool({
     const manualArg = args.manual_mode ? 'True' : 'False';
 
     const pyCode = [
-      'import sys; sys.path.insert(0, ".")',
-      'from scripts.ocean_loss_transfer.extract_loss_ir import extract_loss_ir',
+      `import sys; sys.path.insert(0, "${scriptsDir}")`,
+      'from extract_loss_ir import extract_loss_ir',
       `output = extract_loss_ir(paper_pdf_path=${paperArg}, code_repo_path=${repoArg}, output_yaml_path="${outputArg}", manual_mode=${manualArg})`,
       'print(output)'
     ].join('; ');

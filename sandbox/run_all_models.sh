@@ -4,7 +4,8 @@
 # 结果写入各自的 run_<model>.log，完成后打印汇总
 
 LOSS_FILE=${1:-}
-PYTHON=/home/lz/miniconda3/envs/pytorch/bin/python
+PYTHON=$(python3 "$(dirname "${BASH_SOURCE[0]}")/../scripts/python_manager.py" --module torch 2>/dev/null | grep -oP '(?<=: ).*')
+PYTHON=${PYTHON:-python3}
 SCRIPT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/_run_once.py"
 CONFIG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/configs"
 LOG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

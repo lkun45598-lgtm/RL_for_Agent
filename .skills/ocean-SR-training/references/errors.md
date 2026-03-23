@@ -156,8 +156,11 @@
 
 **修改建议**：
 1. **必须通过 `ocean_sr_train_start` 工具启动训练**，工具内置 `findPythonWithModule('torch')` 自动选择正确环境
-2. 若需手动验证：`/home/lz/miniconda3/envs/pytorch/bin/python -c "import torch; print(torch.__version__)"`
-3. 参考 `references/command-templates.md` 获取正确的 Python 路径
+2. 若需手动验证，使用 `python_manager.py` 查找含 torch 的路径：
+   ```bash
+   python3 scripts/python_manager.py --module torch
+   ```
+3. 参考 `references/command-templates.md` 获取正确的命令模板
 
 ### 其他 ModuleNotFoundError
 
@@ -166,8 +169,15 @@
 - 使用了错误的 conda 环境
 
 **修改建议**：
-1. 确认使用 pytorch 环境：`/home/lz/miniconda3/envs/pytorch/bin/python`
-2. 安装缺失依赖：`/home/lz/miniconda3/envs/pytorch/bin/pip install <package>`
+1. 使用 `python_manager.py` 确认当前含 torch 的 Python 路径：
+   ```bash
+   python3 scripts/python_manager.py --module torch
+   ```
+2. 安装缺失依赖（用上一步得到的路径替换 `$PYTHON`）：
+   ```bash
+   PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
+   $PYTHON -m pip install <package>
+   ```
 
 ---
 

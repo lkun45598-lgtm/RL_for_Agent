@@ -2,11 +2,17 @@
 @file patch_templates.py
 @description Patch 模板系统 - 从预定义模板生成 sandbox_loss.py 代码
 @author Leizheng
+@contributors kongzhiquan
 @date 2026-03-22
-@version 1.0.0
+@version 1.1.0
+
+@changelog
+  - 2026-03-22 Leizheng: v1.0.0 initial version
+  - 2026-03-23 kongzhiquan: v1.1.0 refine type annotations
 """
 
-from typing import Dict, List, Any
+from typing import Callable, Dict, List
+from _types import PixelVariant, GradientVariant, FFTVariant
 
 
 # ============ 辅助函数模板 ============
@@ -138,18 +144,21 @@ def template_amplitude_diff() -> str:
 
 # ============ 模板注册表 ============
 
-PIXEL_LOSS_TEMPLATES = {
+# 模板函数类型: 无参数，返回代码字符串
+TemplateFunc = Callable[[], str]
+
+PIXEL_LOSS_TEMPLATES: Dict[PixelVariant, TemplateFunc] = {
     'rel_l2': template_rel_l2,
     'abs_l1': template_abs_l1,
     'smooth_l1': template_smooth_l1,
 }
 
-GRADIENT_TEMPLATES = {
+GRADIENT_TEMPLATES: Dict[GradientVariant, TemplateFunc] = {
     'sobel_3x3': template_sobel_3x3,
     'scharr_3x3': template_scharr_3x3,
 }
 
-FFT_TEMPLATES = {
+FFT_TEMPLATES: Dict[FFTVariant, TemplateFunc] = {
     'residual_rfft2_abs': template_residual_fft,
     'amplitude_diff': template_amplitude_diff,
 }
@@ -158,9 +167,9 @@ FFT_TEMPLATES = {
 # ============ 主组装函数 ============
 
 def assemble_sandbox_loss(
-    pixel_variant: str = 'rel_l2',
-    gradient_variant: str = 'sobel_3x3',
-    fft_variant: str = 'residual_rfft2_abs',
+    pixel_variant: PixelVariant = 'rel_l2',
+    gradient_variant: GradientVariant = 'sobel_3x3',
+    fft_variant: FFTVariant = 'residual_rfft2_abs',
     scales: List[int] = [1, 2, 4],
     scale_weights: List[float] = [0.5, 0.3, 0.2],
     alpha: float = 0.5,
@@ -169,7 +178,7 @@ def assemble_sandbox_loss(
     description: str = "Generated loss"
 ) -> str:
     """组装完整的 sandbox_loss.py"""
-    
+
     code = f'''"""
 @file sandbox_loss.py
 @description {description}
@@ -181,17 +190,17 @@ import torch.nn.functional as F
 
 
 '''
-    
+
     # 添加辅助函数
     code += template_align_mask() + '\n\n'
     code += template_downsample() + '\n\n'
     code += template_downsample_mask() + '\n\n'
-    
+
     # 添加组件函数
     code += PIXEL_LOSS_TEMPLATES[pixel_variant]() + '\n\n'
     code += GRADIENT_TEMPLATES[gradient_variant]() + '\n\n'
     code += FFT_TEMPLATES[fft_variant]() + '\n\n'
-    
+
     # 主函数
     code += f'''
 def sandbox_loss(pred, target, mask=None,
@@ -202,19 +211,19 @@ def sandbox_loss(pred, target, mask=None,
     mask = _align_mask(mask, pred)
     B = pred.size(0)
     scales = {scales}
-    
+
     loss_pixel = pred.new_zeros(1).squeeze()
     loss_grad = pred.new_zeros(1).squeeze()
-    
+
     for s, sw in zip(scales, scale_weights):
         ps = _downsample(pred, s)
         ts = _downsample(target, s)
         ms = _downsample_mask(mask, s)
         loss_pixel = loss_pixel + sw * _pixel_loss(ps, ts, ms)
         loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
-    
+
     loss_fft = _fft_loss(pred, target) * B
     return alpha * loss_pixel + beta * loss_grad + gamma * loss_fft
 '''
-    
+
     return code

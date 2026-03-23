@@ -12,6 +12,7 @@
 import { defineTool } from '@shareai-lab/kode-sdk';
 import { findFirstPythonPath } from '@/utils/python-manager';
 import { shellEscapeDouble } from '@/utils/shell';
+import path from 'node:path';
 
 export const oceanLossTransferPrepareContext = defineTool({
   name: 'ocean_loss_transfer_prepare_context',
@@ -27,7 +28,7 @@ export const oceanLossTransferPrepareContext = defineTool({
     const pythonPath = await findFirstPythonPath();
     if (!pythonPath) throw new Error('未找到可用的Python解释器');
 
-    const scriptPath = 'scripts/ocean-loss-transfer/prepare_context.py';
+    const scriptPath = path.resolve(process.cwd(), 'scripts/ocean-loss-transfer/prepare_context.py');
 
     const cmd = [
       `"${shellEscapeDouble(pythonPath)}"`,

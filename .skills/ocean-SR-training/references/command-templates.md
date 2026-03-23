@@ -13,10 +13,15 @@
 
 训练工具内部使用 `findPythonWithModule('torch')` 自动查找含 PyTorch 的 Python。
 
-手动验证当前环境：
+**禁止硬编码 Python 路径**。需要手动执行时，先通过 `python_manager.py` 动态获取：
+
 ```bash
-# 查看工具会使用的 Python 路径
-/home/lz/miniconda3/envs/pytorch/bin/python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+# 查找含 torch 的 Python 路径
+python3 scripts/python_manager.py --module torch
+# 输出示例：Python with module "torch": /home/lz/miniconda3/envs/pytorch/bin/python
+
+# 在 bash 脚本中使用（赋值给变量）
+PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
 ```
 
 ### 禁止路径
@@ -39,8 +44,8 @@
 ### 单卡训练
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 \
-/home/lz/miniconda3/envs/pytorch/bin/python \
+PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
+CUDA_VISIBLE_DEVICES=0 $PYTHON \
   {log_dir}/_ocean_sr_code/main.py \
   --mode train \
   --config {log_dir}/config.yaml
@@ -49,8 +54,8 @@ CUDA_VISIBLE_DEVICES=0 \
 ### DP 多卡训练（Data Parallel）
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 \
-/home/lz/miniconda3/envs/pytorch/bin/python \
+PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
+CUDA_VISIBLE_DEVICES=0,1,2,3 $PYTHON \
   {log_dir}/_ocean_sr_code/main.py \
   --mode train \
   --config {log_dir}/config.yaml
@@ -59,9 +64,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 \
 ### DDP 多卡训练（Distributed Data Parallel）
 
 ```bash
+PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
 CUDA_VISIBLE_DEVICES=0,1,2,3 \
 MASTER_PORT=29500 \
-/home/lz/miniconda3/envs/pytorch/bin/python \
+$PYTHON \
   -m torch.distributed.run \
   --nproc_per_node=4 \
   --master_port=29500 \
@@ -109,8 +115,8 @@ nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv
 
 ```bash
 # 开启 NCCL 详细日志
-NCCL_DEBUG=INFO CUDA_VISIBLE_DEVICES=0,1 \
-/home/lz/miniconda3/envs/pytorch/bin/python \
+PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
+NCCL_DEBUG=INFO CUDA_VISIBLE_DEVICES=0,1 $PYTHON \
   -m torch.distributed.run --nproc_per_node=2 ...
 ```
 
@@ -143,8 +149,8 @@ done
 
 ```bash
 # 设置同步执行以获取精确错误位置
-CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 \
-/home/lz/miniconda3/envs/pytorch/bin/python \
+PYTHON=$(python3 scripts/python_manager.py --module torch 2>/dev/null | grep -oP '(?<=: ).*')
+CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=0 $PYTHON \
   {log_dir}/_ocean_sr_code/main.py \
   --mode train \
   --config {log_dir}/config.yaml
