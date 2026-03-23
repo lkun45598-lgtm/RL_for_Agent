@@ -7,11 +7,13 @@
  * @changelog
  *   - 2026-03-23 kongzhiquan: 修复 defineTool 参数格式：parameters+Zod → params 简洁对象，execute → exec；
  *                           修复 ctx.sandbox.exec 调用为字符串形式
+ *   - 2026-03-23 kongzhiquan: 修复 sys.path 使用相对路径导致 ModuleNotFoundError 的问题，改为绝对路径
  */
 
 import { defineTool } from '@shareai-lab/kode-sdk';
 import { findFirstPythonPath } from '@/utils/python-manager';
 import { shellEscapeDouble } from '@/utils/shell';
+import path from 'node:path';
 
 export const oceanLossTransferCheckCompat = defineTool({
   name: 'ocean_loss_transfer_check_compat',
@@ -21,16 +23,17 @@ export const oceanLossTransferCheckCompat = defineTool({
     loss_ir_yaml: { type: 'string', description: 'Loss IR YAML 文件路径' }
   },
 
-  exec: async (args, ctx) => {
+  async exec(args, ctx) {
     const pythonPath = await findFirstPythonPath();
     if (!pythonPath) throw new Error('未找到可用的Python解释器');
     const python = `"${shellEscapeDouble(pythonPath)}"`;
     const yamlArg = shellEscapeDouble(args.loss_ir_yaml);
+    const scriptsDir = shellEscapeDouble(path.resolve(process.cwd(), 'scripts/ocean-loss-transfer'));
 
     const pyCode = [
-      'import sys, yaml, json; sys.path.insert(0, ".")',
-      'from scripts.ocean_loss_transfer.check_compatibility import check_compatibility',
-      'from scripts.ocean_loss_transfer.loss_ir_schema import LossIR',
+      `import sys, yaml, json; sys.path.insert(0, "${scriptsDir}")`,
+      'from check_compatibility import check_compatibility',
+      'from loss_ir_schema import LossIR',
       `data = yaml.safe_load(open("${yamlArg}"))`,
       'loss_ir = LossIR(**data)',
       'result = check_compatibility(loss_ir)',

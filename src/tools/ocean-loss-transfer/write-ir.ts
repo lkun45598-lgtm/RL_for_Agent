@@ -12,8 +12,8 @@
 import { defineTool } from '@shareai-lab/kode-sdk';
 import { findFirstPythonPath } from '@/utils/python-manager';
 import { shellEscapeDouble } from '@/utils/shell';
-import * as fs from 'fs';
-import * as path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const oceanLossTransferWriteIr = defineTool({
   name: 'ocean_loss_transfer_write_ir',
@@ -37,7 +37,7 @@ export const oceanLossTransferWriteIr = defineTool({
     const tmpFile = path.join(tmpDir, `loss_ir_${Date.now()}.yaml`);
     fs.writeFileSync(tmpFile, args.yaml_content, 'utf-8');
 
-    const scriptPath = 'scripts/ocean-loss-transfer/write_loss_ir.py';
+    const scriptPath = path.resolve(process.cwd(), 'scripts/ocean-loss-transfer/write_loss_ir.py');
 
     const cmd = [
       `"${shellEscapeDouble(pythonPath)}"`,

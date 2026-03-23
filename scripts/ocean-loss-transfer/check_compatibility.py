@@ -2,21 +2,27 @@
 @file check_compatibility.py
 @description 检查 Loss IR 与目标接口的兼容性
 @author Leizheng
+@contributors kongzhiquan
 @date 2026-03-22
-@version 1.0.0
+@version 1.1.0
+
+@changelog
+  - 2026-03-22 Leizheng: v1.0.0 initial version
+  - 2026-03-23 kongzhiquan: v1.1.0 refine type annotations
 """
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import List
 
-try:
-    from .loss_ir_schema import LossIR
-except ImportError:
-    from loss_ir_schema import LossIR
+from loss_ir_schema import LossIR
+from _types import (
+    CompatibilityResult, HardIncompatibilityResult,
+    BlockedPatternResult, BlockedPatternsConfig,
+)
 
 
-def load_blocked_patterns() -> Dict[str, Any]:
+def load_blocked_patterns() -> BlockedPatternsConfig:
     """加载已知失败模式"""
     blocked_file = Path(__file__).parent.parent.parent / 'workflow/loss_transfer/blocked_patterns.yaml'
     if blocked_file.exists():
@@ -24,11 +30,11 @@ def load_blocked_patterns() -> Dict[str, Any]:
     return {'blocked_components': []}
 
 
-def check_hard_incompatibility(loss_ir: LossIR) -> Dict[str, Any]:
+def check_hard_incompatibility(loss_ir: LossIR) -> HardIncompatibilityResult:
     """检查硬性不兼容"""
     flags = loss_ir.incompatibility_flags
-    issues = []
-    
+    issues: List[str] = []
+
     if flags.get('requires_model_features'):
         issues.append('需要模型内部特征 (不支持)')
     if flags.get('requires_pretrained_network'):
@@ -37,17 +43,16 @@ def check_hard_incompatibility(loss_ir: LossIR) -> Dict[str, Any]:
         issues.append('需要对抗训练 (不支持)')
     if flags.get('requires_multiple_forward_passes'):
         issues.append('需要多次 forward (不支持)')
-    
+
     return {
         'compatible': len(issues) == 0,
         'issues': issues
     }
 
 
-def check_blocked_patterns(loss_ir: LossIR) -> Dict[str, Any]:
+def check_blocked_patterns(loss_ir: LossIR) -> BlockedPatternResult:
     """检查是否匹配已知失败模式"""
-    blocked = load_blocked_patterns()
-    warnings = []
+    warnings: List[str] = []
 
     for comp in loss_ir.components:
         comp_type = comp.type
@@ -64,9 +69,9 @@ def check_blocked_patterns(loss_ir: LossIR) -> Dict[str, Any]:
     return {'warnings': warnings}
 
 
-def check_compatibility(loss_ir: LossIR) -> Dict[str, Any]:
+def check_compatibility(loss_ir: LossIR) -> CompatibilityResult:
     """主兼容性检查函数"""
-    
+
     # 硬性不兼容
     hard_check = check_hard_incompatibility(loss_ir)
     if not hard_check['compatible']:
@@ -75,16 +80,16 @@ def check_compatibility(loss_ir: LossIR) -> Dict[str, Any]:
             'reason': 'hard_incompatibility',
             'issues': hard_check['issues']
         }
-    
+
     # 已知失败模式
     pattern_check = check_blocked_patterns(loss_ir)
-    
+
     if pattern_check['warnings']:
         return {
             'status': 'partially_compatible',
             'warnings': pattern_check['warnings']
         }
-    
+
     return {
         'status': 'fully_compatible',
         'warnings': []

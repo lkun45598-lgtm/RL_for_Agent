@@ -3,11 +3,15 @@ name: ocean-loss-transfer
 description: 论文 Loss 函数自动迁移 - Agent 分析代码 + 4层验证 + 5-trial 搜索
 version: 2.0.0
 author: Leizheng
+contributors: kongzhiquan
 last_modified: 2026-03-23
 ---
 
 <!--
 Changelog:
+  - 2026-03-23 kongzhiquan: v2.1.0 指导agent寻找python路径
+    - 新增 python_manager.py 工具，动态解析 Python 可执行文件路径
+    - 更新文档，禁止在 bash 命令或脚本中硬编码 Python 路径
   - 2026-03-23 Leizheng: v2.0.0 Agent-Native 提取
     - 移除外部 LLM API 依赖
     - Agent 直接分析代码生成 Loss IR
@@ -103,6 +107,33 @@ await ocean_loss_transfer_orchestrate({
 
 ---
 
+## Python 路径解析
+
+**禁止在任何 bash 命令中硬编码 Python 路径**（如 `/home/lz/miniconda3/envs/pytorch/bin/python`）。
+
+需要调用 Python 时，使用 `python_manager.py` 动态解析：
+
+```bash
+# 查找含 torch 的 Python（训练脚本必须用这个）
+python3 scripts/python_manager.py --module torch
+# 输出: Python with module "torch": /home/.../bin/python
+
+# 查找第一个可用 Python
+python3 scripts/python_manager.py
+```
+
+在 Python 脚本中导入：
+
+```python
+import sys
+sys.path.append('scripts') # 路径根据实际情况调整
+from python_manager import find_first_python_path, find_python_with_module
+
+PYTHON = find_python_with_module('torch') or find_first_python_path() or 'python3'
+```
+
+---
+
 ## 禁止行为
 
 | 类别 | 禁止行为 |
@@ -110,6 +141,7 @@ await ocean_loss_transfer_orchestrate({
 | **Loss IR 生成** | 跳过 prepare_context，直接猜测代码结构 |
 | **验证** | 跳过 write_ir 验证，直接写入文件 |
 | **实验** | 手动修改 sandbox_loss.py，绕过工具 |
+| **Python 路径** | 在 bash 命令或脚本中硬编码 Python 可执行文件路径 |
 
 ---
 
