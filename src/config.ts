@@ -40,7 +40,7 @@ import {
 } from '@shareai-lab/kode-sdk'
 
 import tools from './tools'
-
+import { THINKING_BUDGET_TOKENS } from './utils/constants'
 // ========================================
 // 环境变量配置
 // ========================================
@@ -77,7 +77,7 @@ function loadSkillsWhitelist(skillsDir: string, defaults: string[]): string[] {
   return Array.from(whitelist)
 }
 
-const skillsWhiteList = loadSkillsWhitelist(config.skillsDir, ['ocean-SR-data-preprocess', 'ocean-SR-training'])
+const skillsWhiteList = loadSkillsWhitelist(config.skillsDir, ['ocean-SR-data-preprocess', 'ocean-SR-training', 'ocean-forecast-data-preprocess', 'ocean-forecast-training'])
 console.log('[config] Skills 白名单:', skillsWhiteList)
 
 // ========================================
@@ -179,6 +179,14 @@ skills {"action": "load", "skill_name": "技能名称"}
 **已有技能**：
 - ocean-SR-data-preprocess: 海洋超分辨率数据预处理（NC→NPY，生成高分辨率/低分辨率数据对，用于超分模型训练）
 - ocean-SR-training: 海洋超分辨率模型训练（模型选择、训练、推理）
+- ocean-forecast-data-preprocess: 海洋时序预测数据预处理（NC→NPY，按时间顺序划分 train/valid/test，用于预测模型训练，不涉及超分辨率）
+- ocean-forecast-training: 海洋时序预测模型训练（模型选择、训练、推理、自回归预测，支持 FNO2d/UNet2d/SwinTransformerV2 等模型）
+
+**技能选择指南**：
+- 用户提到"超分"/"高低分辨率"/"上采样" → ocean-SR-data-preprocess
+- 用户提到"预测"/"时间序列"/"划分训练集" → ocean-forecast-data-preprocess
+- 用户提到"训练预测模型"/"预报模型训练"/"forecast training" → ocean-forecast-training
+- 不确定时先 list 再让用户选择
 
 **工作流程**：
 1. 用户提出任务需求
@@ -236,7 +244,7 @@ function createModelFactory() {
       reasoningTransport: 'provider', 
       thinking: {
         enabled: true,
-        budgetTokens: 2048,  // 设置合理的 token 预算，避免过度 thinking
+        budgetTokens: THINKING_BUDGET_TOKENS,  // 设置合理的 token 预算，避免过度 thinking
       }
     },
   )
