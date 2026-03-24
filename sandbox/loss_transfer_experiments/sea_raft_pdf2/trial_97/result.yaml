@@ -1,0 +1,68 @@
+failure_category: null
+patch_spec:
+  code: "\"\"\"\n@file sandbox_loss.py\n@description Experiment #71: multi-scale rel\
+    \ L2 + partial-scale gradient + residual FFT\n    Gradient loss computed only\
+    \ at scale=1 and scale=2 (skip scale=4).\n    Rel L2 still at all 3 scales [1,2,4].\n\
+    \    Hypothesis: scale=4 gradient is too coarse to be useful.\n    alpha=0.5,\
+    \ beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]\n@version 1.71.0\n\"\"\"\n\n\
+    import torch\nimport torch.nn.functional as F\n\n\ndef _align_mask(mask, pred):\n\
+    \    if mask is None:\n        return None\n    H, W = pred.shape[1], pred.shape[2]\n\
+    \    Hm, Wm = mask.shape[1], mask.shape[2]\n    if Hm == H and Wm == W:\n    \
+    \    return mask\n    m = mask.permute(0, 3, 1, 2).float()\n    m = F.interpolate(m,\
+    \ size=(H, W), mode='nearest')\n    return m.permute(0, 2, 3, 1).bool()\n\n\n\
+    def _downsample(x, scale):\n    if scale == 1:\n        return x\n    B, H, W,\
+    \ C = x.shape\n    t = x.permute(0, 3, 1, 2)\n    t = F.avg_pool2d(t, kernel_size=scale,\
+    \ stride=scale)\n    return t.permute(0, 2, 3, 1)\n\n\ndef _downsample_mask(mask,\
+    \ scale):\n    if mask is None or scale == 1:\n        return mask\n    m = mask.permute(0,\
+    \ 3, 1, 2).float()\n    m = F.avg_pool2d(m, kernel_size=scale, stride=scale)\n\
+    \    return (m > 0.5).permute(0, 2, 3, 1)\n\n\ndef _rel_l2(pred, target, mask=None):\n\
+    \    B = pred.size(0)\n    pf = pred.reshape(B, -1)\n    tf = target.reshape(B,\
+    \ -1)\n    mf = mask.expand_as(pred).reshape(B, -1).float() if mask is not None\
+    \ else torch.ones_like(pf)\n    diff = (pf - tf) * mf\n    ym = tf * mf\n    return\
+    \ (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()\n\
+    \n\ndef _gradient_loss(pred, target, mask=None):\n    B, H, W, C = pred.shape\n\
+    \    p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)\n    t = target.permute(0,\
+    \ 3, 1, 2).reshape(B * C, 1, H, W)\n    sx = torch.tensor([[-1, 0, 1], [-2, 0,\
+    \ 2], [-1, 0, 1]],\n                      dtype=pred.dtype, device=pred.device).view(1,\
+    \ 1, 3, 3)\n    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],\n    \
+    \                  dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)\n  \
+    \  diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1))\
+    \ +\n            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))\n\
+    \    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)\n    if mask is not None:\n\
+    \        mf = mask.expand_as(diff).float()\n        return (diff * mf).sum() /\
+    \ mf.sum().clamp(min=1.0)\n    return diff.mean()\n\n\ndef _fft_loss(pred, target):\n\
+    \    residual = (pred - target).float().permute(0, 3, 1, 2)\n    fft_r = torch.fft.rfft2(residual,\
+    \ norm='ortho')\n    return fft_r.abs().mean().to(pred.dtype)\n\n\ndef sandbox_loss(pred,\
+    \ target, mask=None,\n                 alpha=0.5, beta=0.3, gamma=0.2,\n     \
+    \            scale_weights=None, **kwargs):\n    if scale_weights is None:\n \
+    \       scale_weights = [0.5, 0.3, 0.2]\n    mask = _align_mask(mask, pred)\n\
+    \    B = pred.size(0)\n    scales = [1, 2, 4]\n    grad_scales = [1, 2]  # gradient\
+    \ only at fine scales\n    grad_weights = [0.6, 0.4]  # renormalized weights for\
+    \ 2 scales\n    loss_rel = pred.new_zeros(1).squeeze()\n    loss_grad = pred.new_zeros(1).squeeze()\n\
+    \    for s, sw in zip(scales, scale_weights):\n        ps = _downsample(pred,\
+    \ s)\n        ts = _downsample(target, s)\n        ms = _downsample_mask(mask,\
+    \ s)\n        loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)\n    for s, sw in\
+    \ zip(grad_scales, grad_weights):\n        ps = _downsample(pred, s)\n       \
+    \ ts = _downsample(target, s)\n        ms = _downsample_mask(mask, s)\n      \
+    \  loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B\n    loss_fft =\
+    \ _fft_loss(pred, target) * B\n    return alpha * loss_rel + beta * loss_grad\
+    \ + gamma * loss_fft\n"
+  mode: agent_generate
+  name: Agent-Generated (faithful)
+  strategy: faithful
+timestamp: '2026-03-24T12:46:41.860315'
+trial_id: 97
+validation:
+  agent_generate:
+    error: 'Formula alignment failed: symbol_map values not present in code: log_b,
+      weight'
+    formula_alignment_error: 'symbol_map values not present in code: log_b, weight'
+    formula_alignment_warnings:
+    - 'params not exposed as sandbox_loss args (still allowed, but reduces tunability):
+      use_var, var_max, var_min'
+    - 'params keys not referenced in code (possible dead params): use_var, var_max,
+      var_min'
+    passed_formula_alignment: false
+    passed_smoke: true
+    passed_static: true
+    repair_rounds: 0

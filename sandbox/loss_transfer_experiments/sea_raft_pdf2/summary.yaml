@@ -1,0 +1,43 @@
+baseline:
+  improvement_threshold: 0.6745
+  model: swinir
+  ssim_mean: 0.6645
+  ssim_std: 0.01
+  viable_threshold: 0.6545
+best_ssim: 0.621027
+best_trial: 1
+early_stop: null
+failure_summary:
+  nan_during_training: 4
+improvement: -0.043472999999999984
+paper_slug: sea_raft_pdf2
+trials:
+- layer_stopped: null
+  metrics:
+    edsr: 0.753163
+    fno2d: 0.741693
+    swinir: 0.621027
+    unet2d: 0.630812
+  name: Formula Native Faithful
+  passed: true
+  trial_id: 1
+- layer_stopped: layer3
+  metrics: {}
+  name: Formula Native Stabilized
+  passed: false
+  trial_id: 2
+- layer_stopped: layer3
+  metrics: {}
+  name: IR-Driven Faithful
+  passed: false
+  trial_id: 3
+- layer_stopped: layer3
+  metrics: {}
+  name: Normalization Aligned
+  passed: false
+  trial_id: 4
+- layer_stopped: layer3
+  metrics: {}
+  name: Numerical Stabilized
+  passed: false
+  trial_id: 5
