@@ -1,0 +1,17 @@
+failure_category: null
+patch_spec:
+  code: "import torch\ndef sandbox_loss(pred, target, mask=None, **kwargs):\n    return\
+    \ ((pred-target)**2).mean()"
+  mode: agent_generate
+  name: probe
+  strategy: faithful
+timestamp: '2026-03-24T13:07:36.120557'
+trial_id: 999
+validation:
+  formula_interface:
+    detail: 'formula requires runtime variables outside current sandbox interface:
+      log_b, weight. Current runtime only auto-supplies pred/target/mask; missing
+      runtime inputs: log_b, weight'
+    error: formula_interface_incompatible
+    fix_hint: 扩展模型/训练器以传递额外预测变量，或将论文 loss 改写为仅依赖 pred/target/mask/params 的形式
+    passed: false

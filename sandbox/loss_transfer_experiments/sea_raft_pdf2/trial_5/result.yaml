@@ -1,0 +1,97 @@
+failure_category: nan_during_training
+patch_spec:
+  alpha: 0.5
+  beta: 0.3
+  fft_variant: amplitude_diff
+  gamma: 0.2
+  gradient_variant: sobel_3x3
+  name: Numerical Stabilized
+  pixel_variant: smooth_l1
+  scale_weights:
+  - 0.5
+  - 0.3
+  - 0.2
+  scales:
+  - 1
+  - 2
+  - 4
+timestamp: '2026-03-24T16:21:36.544113'
+training_curve: &id001
+  epochs:
+  - epoch: 0
+    train_loss: 0.4817281164228916
+  - epoch: 1
+    train_loss: 0.38384176455438135
+  - epoch: 2
+    train_loss: 0.22964998800307512
+  - epoch: 3
+    train_loss: 0.25679527753964065
+  - epoch: 4
+    psnr: .nan
+    rmse: .nan
+    ssim: .nan
+    train_loss: .nan
+    valid_loss: .nan
+  - epoch: 5
+    train_loss: .nan
+  - epoch: 6
+    train_loss: .nan
+  - epoch: 7
+    train_loss: .nan
+  - epoch: 8
+    train_loss: .nan
+  - epoch: 9
+    psnr: .nan
+    rmse: .nan
+    ssim: .nan
+    train_loss: .nan
+    valid_loss: .nan
+  - epoch: 10
+    train_loss: .nan
+  - epoch: 11
+    train_loss: .nan
+  - epoch: 12
+    train_loss: .nan
+  - epoch: 13
+    train_loss: .nan
+  - epoch: 14
+    psnr: .nan
+    rmse: .nan
+    ssim: .nan
+    train_loss: .nan
+    valid_loss: .nan
+  - epoch: 15
+    psnr: .nan
+    rmse: .nan
+    ssim: .nan
+    valid_loss: .nan
+  last_epoch: 15
+  total_expected_epochs: 15
+  trend: unstable
+trial_id: 5
+validation:
+  layer1:
+    passed: true
+  layer2:
+    grad_norm: 0.014989637769758701
+    loss_value: 3.7188193798065186
+    passed: true
+    smoke_detail:
+      boundary_test_passed: true
+      gradient_analysis:
+        grad_max: 0.0001596398069523275
+        grad_min: -0.0001653697108849883
+        grad_norm: 0.014989637769758701
+      shapes_tested:
+      - (2, 128, 128, 2)
+      - (1, 64, 64, 2)
+      - (4, 256, 256, 2)
+  layer3:
+    detail: 训练过程中出现 NaN，最后有效 epoch=15，SSIM=nan，PSNR=nan
+    error: nan_during_training
+    fix_hint: Loss 数值不稳定
+    partial_metrics:
+      val_psnr: .nan
+      val_ssim: .nan
+    passed: false
+    training_curve: *id001

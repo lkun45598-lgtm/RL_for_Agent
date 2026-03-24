@@ -1,0 +1,28 @@
+combination:
+  method: weighted_sum
+components:
+- implementation:
+    operates_on: pixel_space
+    reduction: mean
+  name: pixel_loss
+  type: pixel_loss
+  weight: 1.0
+incompatibility_flags:
+  requires_adversarial: false
+  requires_model_features: false
+  requires_multiple_forward_passes: false
+  requires_pretrained_network: false
+interface:
+  input_tensors:
+  - name: pred
+    required: true
+    shape: '[B,H,W,C]'
+  - name: target
+    required: true
+    shape: '[B,H,W,C]'
+metadata:
+  code_repo: 'TODO: 代码仓库'
+  paper_title: 'TODO: 论文标题'
+  paper_url: 'TODO: 论文链接'
+multi_scale:
+  enabled: false
