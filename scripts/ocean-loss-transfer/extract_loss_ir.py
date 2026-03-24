@@ -64,6 +64,8 @@ def generate_template_yaml(output_path: str) -> str:
                 'name': 'pixel_loss',
                 'type': 'pixel_loss',
                 'weight': 1.0,
+                'required_tensors': ['pred', 'target'],
+                'required_imports': ['torch'],
                 'implementation': {
                     'reduction': 'mean',
                     'operates_on': 'pixel_space'

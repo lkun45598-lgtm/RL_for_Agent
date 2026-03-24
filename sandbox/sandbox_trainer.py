@@ -9,11 +9,15 @@
 
 @changelog
   - 2026-03-20 Leizheng: v1.0.0 初始版本
+  - 2026-03-24 Leizheng: v1.1.0 支持沙箱模型输出适配器
+    - 可选用 sandbox_adapter 包装原始模型
+    - 在不改原始 models/ 代码的前提下生成 loss_inputs
 """
 
 import os
 import sys
 import importlib.util
+from typing import Any, Dict
 
 # 将现有训练管线加入 sys.path
 _PIPELINE_DIR = os.path.join(os.path.dirname(__file__), '..', 'scripts', 'ocean-SR-training-masked')
@@ -22,6 +26,7 @@ if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 
 from trainers.base import BaseTrainer
+from sandbox_model_adapter import maybe_wrap_model_with_aux_adapter
 
 
 class SandboxLossWrapper:
@@ -30,9 +35,10 @@ class SandboxLossWrapper:
     每次实例化时从文件重新加载，无缓存问题。
     """
 
-    def __init__(self, loss_file: str, size_average: bool = False):
+    def __init__(self, loss_file: str, size_average: bool = False, extra_kwargs_provider=None):
         self.loss_file = os.path.abspath(loss_file)
         self.size_average = size_average
+        self.extra_kwargs_provider = extra_kwargs_provider
         self._load()
 
     def _load(self):
@@ -43,8 +49,32 @@ class SandboxLossWrapper:
             raise AttributeError(f"sandbox_loss.py must define a 'sandbox_loss' function")
         self._fn = mod.sandbox_loss
 
+    @staticmethod
+    def _align_aux_value(value: Any, pred) -> Any:
+        if not hasattr(pred, 'shape') or not hasattr(value, 'shape'):
+            return value
+        if getattr(pred, 'dim', lambda: 0)() != 4 or getattr(value, 'dim', lambda: 0)() != 4:
+            return value
+
+        h, w = pred.shape[1], pred.shape[2]
+        if value.shape[1] >= h and value.shape[2] >= w:
+            return value[:, :h, :w, :]
+        if value.shape[2] >= h and value.shape[3] >= w:
+            return value[:, :, :h, :w]
+        return value
+
     def __call__(self, x, y, mask=None, **kwargs):
-        return self._fn(x, y, mask=mask, **kwargs)
+        merged_kwargs: Dict[str, Any] = {}
+        if self.extra_kwargs_provider is not None:
+            provided = self.extra_kwargs_provider()
+            if provided:
+                merged_kwargs.update(provided)
+        merged_kwargs.update(kwargs)
+        aligned_kwargs = {
+            key: self._align_aux_value(value, x)
+            for key, value in merged_kwargs.items()
+        }
+        return self._fn(x, y, mask=mask, **aligned_kwargs)
 
 
 class SandboxTrainer(BaseTrainer):
@@ -58,5 +88,31 @@ class SandboxTrainer(BaseTrainer):
         )
         super().__init__(args)
 
+    def build_model(self, **kwargs):
+        model = BaseTrainer.build_model(self, **kwargs)
+        adapter_cfg = self.args.get('sandbox_adapter', {})
+        if adapter_cfg and adapter_cfg.get('enabled', False):
+            model = maybe_wrap_model_with_aux_adapter(
+                model,
+                self.model_args,
+                adapter_cfg,
+            )
+            self.main_log(
+                "Sandbox adapter enabled with heads: {}".format(
+                    ", ".join(sorted(adapter_cfg.get('heads', {}).keys()))
+                )
+            )
+        return model
+
+    def _get_model_loss_inputs(self):
+        model = self._unwrap()
+        if hasattr(model, 'consume_latest_loss_inputs'):
+            return model.consume_latest_loss_inputs()
+        return {}
+
     def build_loss(self, **kwargs):
-        return SandboxLossWrapper(self._loss_file, size_average=False)
+        return SandboxLossWrapper(
+            self._loss_file,
+            size_average=False,
+            extra_kwargs_provider=self._get_model_loss_inputs,
+        )

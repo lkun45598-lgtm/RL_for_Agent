@@ -1,15 +1,19 @@
 """
 @file orchestrate_trials.py
-@description 编排 5-trial 固定策略
+@description 编排优先公式原生的固定 trial 策略
 @author Leizheng
 @contributors kongzhiquan
 @date 2026-03-22
-@version 1.2.0
+@version 1.4.0
 
 @changelog
   - 2026-03-22 Leizheng: v1.0.0 initial version
   - 2026-03-23 kongzhiquan: v1.1.0 fix Trial 2/4 duplicate params; IR-driven template selection for Trial 1-3; LLM generate mode for Trial 4-5
   - 2026-03-23 kongzhiquan: v1.2.0 refine type annotations
+  - 2026-03-24 Leizheng: v1.3.0 add trial early stopping on consecutive early-layer
+    failures with same error pattern; add failure_summary to ExperimentSummary
+  - 2026-03-24 Leizheng: v1.4.0 prepend deterministic formula-native trials
+    when loss_formula.json is supported by formula_code_generator
 """
 
 import yaml
@@ -17,13 +21,19 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
+from formula_code_generator import (
+    generate_formula_loss_code,
+    load_formula_spec_for_paper,
+    supports_formula_codegen,
+)
 from loss_ir_schema import LossIR, LossIRLike
 from run_trial import run_single_trial
 from run_baseline_noise import run_baseline_noise
 from _types import (
     ExperimentSummary, TrialSummaryItem, PatchSpec, TemplatePatchSpec,
-    LLMPatchSpec, BaselineThresholds, ComponentsByType, ComponentDict,
+    AgentPatchSpec, LLMPatchSpec, BaselineThresholds, ComponentsByType, ComponentDict,
     PixelVariant, GradientVariant, FFTVariant, TrainingMetrics,
+    EarlyStopInfo,
 )
 
 
@@ -113,8 +123,39 @@ def _compute_weights(comp_by_type: ComponentsByType) -> Tuple[float, float, floa
     return alpha, beta, gamma
 
 
-def generate_trial_specs(loss_ir: LossIRLike) -> List[PatchSpec]:
-    """生成 5 个 trial 的 patch 规格：Trial 1-3 由 IR 驱动模板，Trial 4-5 由 LLM 生成"""
+def _build_formula_native_specs(paper_slug: Optional[str]) -> List[PatchSpec]:
+    """若公式规格可识别，则优先构造确定性的 formula-native trials。"""
+    if not paper_slug:
+        return []
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    formula_spec = load_formula_spec_for_paper(str(project_root), paper_slug)
+    if not supports_formula_codegen(formula_spec):
+        return []
+
+    assert formula_spec is not None
+    variants = [
+        ('faithful', 'Formula Native Faithful'),
+        ('stabilized', 'Formula Native Stabilized'),
+    ]
+
+    trials: List[PatchSpec] = []
+    for variant, name in variants:
+        spec: AgentPatchSpec = {
+            'name': name,
+            'mode': 'agent_generate',
+            'strategy': 'faithful',
+            'code': generate_formula_loss_code(formula_spec, variant=variant),
+        }
+        trials.append(spec)
+    return trials
+
+
+def generate_trial_specs(
+    loss_ir: LossIRLike,
+    paper_slug: Optional[str] = None,
+) -> List[PatchSpec]:
+    """生成 trial 规格：优先公式原生 trial，再回退到 IR 驱动模板。"""
 
     # 解析 Loss IR 组件
     comp_by_type = _extract_components_by_type(loss_ir)
@@ -169,24 +210,14 @@ def generate_trial_specs(loss_ir: LossIRLike) -> List[PatchSpec]:
         'alpha': 0.5, 'beta': 0.3, 'gamma': 0.2
     }
 
-    # # Trial 4: Paper Faithful (LLM 忠实迁移论文 loss)
-    # trial_4: LLMPatchSpec = {
-    #     'name': 'Paper Faithful',
-    #     'mode': 'llm_generate',
-    #     'strategy': 'faithful',
-    # }
+    formula_trials = _build_formula_native_specs(paper_slug)
+    return formula_trials + [trial_1, trial_2, trial_3]
 
-    # # Trial 5: Paper Creative (LLM 创新融合)
-    # trial_5: LLMPatchSpec = {
-    #     'name': 'Paper Creative',
-    #     'mode': 'llm_generate',
-    #     'strategy': 'creative',
-    # }
-
-    # return [trial_1, trial_2, trial_3, trial_4, trial_5]
-    return [trial_1, trial_2, trial_3]
-
-def orchestrate_trials(loss_ir: LossIRLike, paper_slug: str) -> ExperimentSummary:
+def orchestrate_trials(
+    loss_ir: LossIRLike,
+    paper_slug: str,
+    dataset_root: Optional[str] = None,
+) -> ExperimentSummary:
     """
     编排 5-trial 搜索
 
@@ -209,14 +240,33 @@ def orchestrate_trials(loss_ir: LossIRLike, paper_slug: str) -> ExperimentSummar
     else:
         baseline = yaml.safe_load(baseline_file.read_text())
 
-    # 2. 生成 5 个 trial 规格
-    trial_specs = generate_trial_specs(loss_ir)
+    # 2. 生成 trial 规格（优先 formula-native，随后模板回退）
+    trial_specs = generate_trial_specs(loss_ir, paper_slug=paper_slug)
 
-    # 3. 执行 trials
+    # 3. 执行 trials（含早停逻辑）
     results: List[TrialSummaryItem] = []
+    consecutive_early_failures = 0
+    last_failure_error: Optional[str] = None
+    early_stop_info: Optional[EarlyStopInfo] = None
+    failure_counts: Dict[str, int] = {}
+
     for i, spec in enumerate(trial_specs, 1):
-        print(f'\n=== Trial {i}/5: {spec["name"]} ===')
-        result = run_single_trial(loss_ir, spec, i, paper_slug)
+        # 检查早停条件: 连续 2 个 trial 在 Layer 1/2 以相同错误失败
+        if consecutive_early_failures >= 2 and last_failure_error:
+            early_stop_info = {
+                'reason': 'systematic_incompatibility',
+                'consecutive_failures': consecutive_early_failures,
+                'failure_pattern': last_failure_error,
+                'trials_completed': i - 1,
+                'trials_skipped': len(trial_specs) - (i - 1),
+            }
+            print(f'\n=== EARLY STOP: {consecutive_early_failures} consecutive early failures ===')
+            print(f'  Error pattern: {last_failure_error}')
+            print(f'  Skipping remaining {len(trial_specs) - (i - 1)} trials')
+            break
+
+        print(f'\n=== Trial {i}/{len(trial_specs)}: {spec["name"]} ===')
+        result = run_single_trial(loss_ir, spec, i, paper_slug, dataset_root=dataset_root)
         item: TrialSummaryItem = {
             'trial_id': i,
             'name': spec['name'],
@@ -225,7 +275,35 @@ def orchestrate_trials(loss_ir: LossIRLike, paper_slug: str) -> ExperimentSummar
             'metrics': result.get('metrics', {})
         }
         results.append(item)
-        print(f'Result: {"PASSED" if result["passed"] else "FAILED at " + str(result.get("layer_stopped"))}')
+
+        # 追踪失败统计
+        layer_stopped = result.get('layer_stopped')
+        if not result['passed'] and layer_stopped in ('layer1', 'layer2'):
+            # 从验证结果中提取具体错误
+            current_error = 'unknown'
+            validation = result.get('validation', {})
+            if layer_stopped and layer_stopped in validation:
+                current_error = validation[layer_stopped].get('error', 'unknown')
+
+            failure_counts[current_error] = failure_counts.get(current_error, 0) + 1
+
+            if current_error == last_failure_error:
+                consecutive_early_failures += 1
+            else:
+                consecutive_early_failures = 1
+                last_failure_error = current_error
+        else:
+            consecutive_early_failures = 0
+            last_failure_error = None
+
+            if not result['passed'] and layer_stopped:
+                # Layer 3/4 失败也记录但不触发早停
+                validation = result.get('validation', {})
+                if layer_stopped in validation:
+                    err = validation[layer_stopped].get('error', 'unknown')
+                    failure_counts[err] = failure_counts.get(err, 0) + 1
+
+        print(f'Result: {"PASSED" if result["passed"] else "FAILED at " + str(layer_stopped)}')
 
     # 4. 找出最佳 trial
     best_trial: Optional[int] = None
@@ -243,7 +321,9 @@ def orchestrate_trials(loss_ir: LossIRLike, paper_slug: str) -> ExperimentSummar
         'trials': results,
         'best_trial': best_trial,
         'best_ssim': best_ssim,
-        'improvement': best_ssim - baseline['ssim_mean'] if best_trial else None
+        'improvement': best_ssim - baseline['ssim_mean'] if best_trial else None,
+        'early_stop': early_stop_info,
+        'failure_summary': failure_counts if failure_counts else {},
     }
 
     # 6. 保存
@@ -270,13 +350,29 @@ def orchestrate_trials(loss_ir: LossIRLike, paper_slug: str) -> ExperimentSummar
         except Exception as e:
             print(f'⚠️  Knowledge extraction failed: {e}')
 
-    # 7. 自动 git commit & push
+    # 7. 自动 git commit & push（仅实验分支）
     if best_trial:
         import subprocess
         repo_root = Path(__file__).parent.parent.parent
         commit_msg = f"Loss Transfer: {paper_slug} - Best Trial {best_trial} (SSIM={best_ssim:.4f})"
+        experiment_branch = 'autoresearch/mar20'
 
         try:
+            branch_result = subprocess.run(
+                ['git', 'branch', '--show-current'],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            current_branch = branch_result.stdout.strip()
+            if current_branch != experiment_branch:
+                print(
+                    f'\n⚠️  Skip auto git push: current branch is {current_branch!r}, '
+                    f'experiment artifacts must be committed on {experiment_branch!r}'
+                )
+                return summary
+
             subprocess.run(['git', 'add', f'sandbox/loss_transfer_experiments/{paper_slug}'], cwd=repo_root, check=True)
             subprocess.run(['git', 'commit', '-m', commit_msg], cwd=repo_root, check=True)
             subprocess.run(['git', 'push'], cwd=repo_root, check=True)

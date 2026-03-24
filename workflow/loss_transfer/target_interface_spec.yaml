@@ -1,6 +1,6 @@
 # Target Interface Specification for sandbox_loss.py
-version: "1.0.0"
-last_updated: "2026-03-22"
+version: "1.1.0"
+last_updated: "2026-03-24"
 
 interface:
   function_name: "sandbox_loss"
@@ -27,6 +27,10 @@ interface:
 constraints:
   allowed_imports: ["torch", "torch.nn.functional", "math"]
   layout_constraint: "BHWC"
+  runtime_guarantees:
+    - "sandbox runtime only auto-supplies pred, target, and optional mask"
+    - "if sandbox uses a model adapter that caches extra loss inputs, SandboxTrainer forwards them to sandbox_loss as kwargs"
+    - "when loss_formula.json declares extra variables, validator/auto-experiment can synthesize sandbox_adapter configs without modifying the original training pipeline"
 
 current_best:
   experiment: "exp#71"
