@@ -1,0 +1,22 @@
+{
+  "name": "faithful_extend_outputs_mol_sequence",
+  "kind": "agent_code",
+  "variant": "faithful",
+  "objective": "按论文与原仓库语义实现最贴近 SEA-RAFT 的迁移：扩展 sandbox 模型输出，使其显式提供逐阶段/逐预测的 `pred`、`log_b`、`weight`（或可等价还原这两个量的 loss_inputs）；在 candidate loss 中实现 masked mixture Laplace NLL，并保留按迭代 gamma 衰减求和、对无效与极大位移样本屏蔽、对数空间稳定化以及 beta 上界裁剪等关键约束。",
+  "files_to_edit": [
+    "sandbox model adapter files exposing extra loss inputs",
+    "candidate_loss.py"
+  ],
+  "evidence_refs": [
+    "paper_analysis.sections[1]",
+    "paper_analysis.loss_snippets[1]",
+    "paper_analysis.loss_snippets[7]",
+    "code_analysis.focus_files[0]",
+    "code_analysis.focus_files[2]",
+    "integration_assessment.extra_required_variables",
+    "formula_spec.params",
+    "formula_spec.interface_analysis"
+  ],
+  "run_training": true,
+  "notes": "这是首选方案，因为它最忠实地保留论文中的分布式监督与迭代监督耦合关系。虽然改动面比 loss-only 大，但仍是 change_level=4 的最小正确实现，不需要更深的 model_surgery。"
+}

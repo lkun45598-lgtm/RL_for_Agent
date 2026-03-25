@@ -1,0 +1,197 @@
+{
+  "attempt_id": 102,
+  "name": "faithful_extend_outputs_mol_sequence",
+  "kind": "agent_code",
+  "status": "passed",
+  "passed": true,
+  "run_training": false,
+  "passed_static": true,
+  "passed_smoke": true,
+  "passed_formula_alignment": true,
+  "stop_layer": null,
+  "error": null,
+  "validation": {
+    "layer1": {
+      "passed": true
+    },
+    "layer2": {
+      "passed": true,
+      "loss_value": 2.2684290409088135,
+      "grad_norm": 0.0078125,
+      "smoke_detail": {
+        "shapes_tested": [
+          "(2, 128, 128, 2)",
+          "(1, 64, 64, 2)",
+          "(4, 256, 256, 2)"
+        ],
+        "boundary_test_passed": true,
+        "gradient_analysis": {
+          "grad_norm": 0.0078125,
+          "grad_min": -3.0517578125e-05,
+          "grad_max": 3.0517578125e-05
+        }
+      }
+    },
+    "formula_alignment": {
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "params not exposed as sandbox_loss args (still allowed, but reduces tunability): MAX_FLOW, epsilon, gamma, use_var, var_max, var_min",
+        "formula requires extra model-provided loss inputs beyond pred/target/mask/params: log_b, weight"
+      ],
+      "details": {
+        "sandbox_loss_args": [
+          "pred",
+          "target",
+          "mask",
+          "kwargs"
+        ],
+        "missing_symbol_values": [],
+        "params_missing_in_signature": [
+          "MAX_FLOW",
+          "epsilon",
+          "gamma",
+          "use_var",
+          "var_max",
+          "var_min"
+        ],
+        "params_unused_in_code": [],
+        "interface_analysis": {
+          "status": "requires_model_changes",
+          "base_interface_variables": [
+            "pred",
+            "target",
+            "mask"
+          ],
+          "param_variables": [
+            "MAX_FLOW",
+            "epsilon",
+            "gamma",
+            "use_var",
+            "var_max",
+            "var_min"
+          ],
+          "mapped_variables": [
+            "epsilon",
+            "gamma",
+            "log_b",
+            "pred",
+            "target",
+            "weight"
+          ],
+          "runtime_can_forward_model_loss_inputs": true,
+          "requires_model_output_extension": true,
+          "requires_extra_prediction_heads": true,
+          "loss_only_pipeline_compatible": false,
+          "auto_experiment_supported": true,
+          "extra_required_variables": [
+            "log_b",
+            "weight"
+          ],
+          "extra_required_symbols": [
+            "LOG_B_SYMBOL_TODO",
+            "WEIGHT_SYMBOL_TODO"
+          ],
+          "head_friendly_variables": [
+            "log_b",
+            "weight"
+          ],
+          "unclear_extra_variables": [],
+          "feature_like_variables": [],
+          "declared_adapter_heads": [
+            "log_b",
+            "weight"
+          ],
+          "missing_adapter_heads": [],
+          "adapter_config_source": "declared",
+          "structure_hints": {
+            "loss_defined_inside_model_forward": true,
+            "model_returns_structured_outputs": true,
+            "uses_feature_or_hidden_state_terms": true,
+            "uses_pretrained_or_adversarial_terms": false,
+            "uses_multi_stage_or_multi_scale_terms": true,
+            "uses_distributional_aux_heads": true,
+            "explicit_loss_inputs_container": false,
+            "detected_aux_variables": [
+              "weight",
+              "log_b"
+            ],
+            "evidence_paths": {
+              "forward_loss": [
+                "core/raft.py"
+              ],
+              "structured_outputs": [
+                "train.py",
+                "core/raft.py"
+              ],
+              "feature_terms": [
+                "core/raft.py"
+              ],
+              "external_terms": [],
+              "multi_stage_terms": [],
+              "explicit_loss_inputs": []
+            }
+          },
+          "simple_formula": false,
+          "change_level": 4,
+          "change_level_label": "model_output_extension",
+          "change_level_reasons": [
+            "Formula needs extra loss inputs that look like lightweight prediction heads: log_b, weight",
+            "Paper/code hints indicate multi-stage or multi-scale supervision",
+            "Paper code appears to compute or couple loss logic inside model.forward"
+          ],
+          "recommended_integration_path": "extend_model_outputs",
+          "minimal_change_possible": false,
+          "requires_model_changes": true,
+          "can_use_original_loss_factory_directly": false,
+          "issues": [
+            "formula requires additional model-provided loss inputs; auto experiment must enable sandbox_adapter heads for: log_b, weight",
+            "formula likely needs deeper integration than loss-only migration; recommended path: extend_model_outputs"
+          ],
+          "notes": "Change levels: L1=params only, L2=spec-driven loss recipe, L3=loss_inputs adapter/wrapper, L4=model output extension, L5=model surgery. The sandbox runtime can forward extra kwargs to sandbox_loss when using a sandbox model adapter that exposes extra loss inputs, but change_level>=4 means the original SR code likely needs deeper integration than a loss-only patch."
+        }
+      }
+    }
+  },
+  "metrics": {},
+  "baseline_delta": null,
+  "reward_summary": {
+    "primary_metric_name": null,
+    "primary_metric": null,
+    "baseline_delta": null
+  },
+  "paths": {
+    "attempt_dir": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102",
+    "code_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/candidate_loss.py",
+    "result_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/result.json"
+  },
+  "metadata": {
+    "baseline": {
+      "model": "swinir",
+      "n_runs": 1,
+      "ssim_mean": 0.7321976009342406,
+      "ssim_std": 0.0,
+      "psnr_mean": 12.179431215922039,
+      "psnr_std": 0.0,
+      "viable_threshold": 0.7221976009342406,
+      "improvement_threshold": 0.7421976009342406
+    },
+    "notes": "这是首选方案，因为它最忠实地保留论文中的分布式监督与迭代监督耦合关系。虽然改动面比 loss-only 大，但仍是 change_level=4 的最小正确实现，不需要更深的 model_surgery。",
+    "agent_generation": {
+      "status": "success",
+      "code_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/candidate_loss.py",
+      "agent_response_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/agent_code_generation_response.json",
+      "agent_id": "agt-01KMJASBQHPKBE7B1YK0VD70FY",
+      "agent_text": "先读取上下文与公式文件，再直接生成目标 `candidate_loss.py`。已拿到公式与参数，接着只写目标候选 loss 文件。code_written:/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/candidate_loss.py",
+      "code_chars": 5533
+    },
+    "agent_repair": {
+      "status": "success",
+      "code_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/candidate_loss.py",
+      "agent_response_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/agent_code_repair_response.json",
+      "agent_id": "agt-01KMJATSW437X1PDHGXRSRGPVP",
+      "agent_text": "先读取上下文和当前候选文件，然后只修复目标 `candidate_loss.py`。已定位维度错误点，接着最小改写 `candidate_loss.py` 并保留公式变量名。我先重新读取目标文件确认已落盘，再按你的要求只回一行确认。code_written:/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_102/candidate_loss.py",
+      "code_chars": 5960
+    }
+  }
+}

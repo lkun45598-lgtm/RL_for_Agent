@@ -1,0 +1,61 @@
+{
+  "summary": "SEA-RAFT 的关键并不只是公式本身，而是论文明确要求网络在每次更新迭代都重新预测分布参数，代码也显示负对数似然项 `nf` 在 `core/raft.py` 的 `forward` 中由 `flow_predictions` 与辅助输出 `info_predictions` 联合构造，再由 `core/loss.py` 做按迭代加权汇总。因此该迁移不能伪装成纯 loss-only；应采用 extend_model_outputs 路径，在 sandbox 侧为模型输出补齐 `log_b` 与 `weight` 这两个额外 loss 输入，并保持 sequence-style、masked、gamma-weighted 的训练语义。",
+  "stop_on_first_pass": false,
+  "integration_decision": {
+    "path": "extend_model_outputs",
+    "rationale": "paper_analysis 表明 MoL loss 与直接回归初始流、每次迭代重预测 α/β 是一体化设计；code_analysis 进一步表明原始实现不是在独立 loss 文件中从普通预测张量直接计算，而是在 model.forward 内生成 `info_predictions`，再拆成 `weight` 与 `log_b`，构成 `nf` 供 sequence_loss 聚合。formula_spec 和 integration_assessment 也一致指出额外变量 `log_b`、`weight` 是必需的，且 loss_only_pipeline_viable=false、requires_model_changes=true。基于这些联合证据，最小但正确的集成方式是扩展模型输出，而不是仅替换损失公式。",
+    "evidence_refs": [
+      "paper_analysis.sections[1]",
+      "paper_analysis.loss_snippets[7]",
+      "code_analysis.focus_files[0]",
+      "code_analysis.focus_files[2]",
+      "integration_assessment",
+      "formula_spec.interface_analysis",
+      "loss_spec"
+    ]
+  },
+  "attempts": [
+    {
+      "name": "faithful_extend_outputs_mol_sequence",
+      "kind": "agent_code",
+      "variant": "faithful",
+      "objective": "按论文与原仓库语义实现最贴近 SEA-RAFT 的迁移：扩展 sandbox 模型输出，使其显式提供逐阶段/逐预测的 `pred`、`log_b`、`weight`（或可等价还原这两个量的 loss_inputs）；在 candidate loss 中实现 masked mixture Laplace NLL，并保留按迭代 gamma 衰减求和、对无效与极大位移样本屏蔽、对数空间稳定化以及 beta 上界裁剪等关键约束。",
+      "files_to_edit": [
+        "sandbox model adapter files exposing extra loss inputs",
+        "candidate_loss.py"
+      ],
+      "evidence_refs": [
+        "paper_analysis.sections[1]",
+        "paper_analysis.loss_snippets[1]",
+        "paper_analysis.loss_snippets[7]",
+        "code_analysis.focus_files[0]",
+        "code_analysis.focus_files[2]",
+        "integration_assessment.extra_required_variables",
+        "formula_spec.params",
+        "formula_spec.interface_analysis"
+      ],
+      "run_training": true,
+      "notes": "这是首选方案，因为它最忠实地保留论文中的分布式监督与迭代监督耦合关系。虽然改动面比 loss-only 大，但仍是 change_level=4 的最小正确实现，不需要更深的 model_surgery。"
+    },
+    {
+      "name": "stabilized_extend_outputs_mol_sequence",
+      "kind": "formula_variant",
+      "variant": "stabilized",
+      "objective": "在保持 extend_model_outputs 前提下，采用更稳健的数值实现：显式使用 logsumexp 形式的 mixture Laplace NLL，继续在 log-space 处理尺度项，并对 `log_b` 做论文/代码一致的区间裁剪与 epsilon 防护，以降低 sandbox 训练初期数值溢出和 NaN 风险。",
+      "files_to_edit": [
+        "candidate_loss.py",
+        "sandbox model adapter files exposing extra loss inputs"
+      ],
+      "evidence_refs": [
+        "paper_analysis.loss_snippets[7]",
+        "code_analysis.focus_files[0]",
+        "code_analysis.focus_files[2]",
+        "integration_assessment.issues[0]",
+        "formula_spec.params",
+        "formula_spec.interface_analysis.change_level_reasons"
+      ],
+      "run_training": true,
+      "notes": "这是备选方案，不改变集成路径，只在公式实现层做稳定化处理，适合作为 faithful 版本出现 NaN/Inf 或梯度异常时的第二次尝试。"
+    }
+  ]
+}

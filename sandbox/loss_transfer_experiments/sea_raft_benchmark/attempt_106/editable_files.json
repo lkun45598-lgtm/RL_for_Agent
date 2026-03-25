@@ -1,0 +1,23 @@
+{
+  "candidate_loss_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_106/candidate_loss.py",
+  "sandbox_override_dir": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_106/sandbox_overrides",
+  "editable_targets": [
+    {
+      "path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_106/candidate_loss.py",
+      "kind": "candidate_loss",
+      "description": "Primary sandbox loss entrypoint for this attempt."
+    },
+    {
+      "path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/attempt_106/sandbox_overrides/sandbox_model_adapter.py",
+      "kind": "sandbox_override",
+      "source_path": "/data1/user/lz/RL_for_Agent/sandbox/sandbox_model_adapter.py",
+      "description": "Attempt-scoped sandbox override. Validators load this file via SANDBOX_OVERRIDE_DIR instead of editing repo-root sandbox modules."
+    }
+  ],
+  "notes": [
+    "Edit only the files listed here.",
+    "Do not modify repo-root sandbox/, training/, or data-processing files during loss transfer attempts.",
+    "If sandbox_override_dir is present, validators will load same-named Python modules from it first.",
+    "Directory targets mean the whole copied tree is editable, but only inside that attempt-scoped copy."
+  ]
+}

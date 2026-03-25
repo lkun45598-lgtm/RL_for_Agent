@@ -1,0 +1,205 @@
+{
+  "latex": [
+    "gression performs poorly is that it\ndeviates from the standard endpoint-error metric, which only cares about the\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{",
+    "AFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d",
+    "ce frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhe",
+    "ion on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direc",
+    "] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y directi",
+    "ifference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free par",
+    ". Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by th",
+    "e to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-"
+  ],
+  "raw_formula_candidates": [
+    "gression performs poorly is that it\ndeviates from the standard endpoint-error metric, which only cares about the\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{",
+    "AFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d",
+    "ce frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhe",
+    "ion on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direc",
+    "] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y directi",
+    "ifference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free par",
+    ". Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by th",
+    "e to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-"
+  ],
+  "latex_extraction_status": "heuristic_pdf_text_windows",
+  "params": {
+    "MAX_FLOW": 400,
+    "gamma": 0.85,
+    "use_var": true,
+    "var_min": 0,
+    "var_max": 10,
+    "epsilon": 1e-08
+  },
+  "symbol_map": {
+    "PRED_SYMBOL_TODO": "pred",
+    "TARGET_SYMBOL_TODO": "target",
+    "\\gamma": "gamma",
+    "\\epsilon": "epsilon",
+    "WEIGHT_SYMBOL_TODO": "weight",
+    "LOG_B_SYMBOL_TODO": "log_b"
+  },
+  "adapter_heads": {
+    "weight": {
+      "activation": "tanh",
+      "output_scale": 4.0,
+      "bias_init": 0.0,
+      "detach_input": true,
+      "zero_init": true
+    },
+    "log_b": {
+      "activation": "tanh",
+      "output_scale": 4.0,
+      "bias_init": 0.0,
+      "detach_input": true,
+      "zero_init": true
+    }
+  },
+  "notes": "AUTO-DRAFT: generated heuristically from paper snippets + code/config evidence. The `latex` field is currently a cleaned candidate reconstructed from PDF text windows, not guaranteed to be exact author LaTeX. Check `raw_formula_candidates` when formula formatting matters. You must manually review symbol names, equation formatting, and whether all predicted variables required by the paper are represented. adapter_heads is only a sandbox-side draft and may need manual correction for channel counts or activations.",
+  "review_required": true,
+  "sources": {
+    "paper_pdf_path": "Benchmark/SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow.pdf",
+    "code_repo_path": "Benchmark/SEA-RAFT-main",
+    "paper_title": "SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow",
+    "primary_files": [
+      {
+        "path": "core/loss.py",
+        "functions": "sequence_loss",
+        "priority": "high"
+      },
+      {
+        "path": "train.py",
+        "functions": "fetch_optimizer, train, main",
+        "priority": "medium"
+      },
+      {
+        "path": "core/raft.py",
+        "functions": "__init__, initialize_flow, upsample_data, forward",
+        "priority": "medium"
+      }
+    ],
+    "detected_aux_variables": [
+      "weight",
+      "log_b"
+    ],
+    "structure_hints": {
+      "loss_defined_inside_model_forward": true,
+      "model_returns_structured_outputs": true,
+      "uses_feature_or_hidden_state_terms": true,
+      "uses_pretrained_or_adversarial_terms": false,
+      "uses_multi_stage_or_multi_scale_terms": true,
+      "uses_distributional_aux_heads": true,
+      "explicit_loss_inputs_container": false,
+      "detected_aux_variables": [
+        "weight",
+        "log_b"
+      ],
+      "evidence_paths": {
+        "forward_loss": [
+          "core/raft.py"
+        ],
+        "structured_outputs": [
+          "train.py",
+          "core/raft.py"
+        ],
+        "feature_terms": [
+          "core/raft.py"
+        ],
+        "external_terms": [],
+        "multi_stage_terms": [],
+        "explicit_loss_inputs": []
+      }
+    }
+  },
+  "interface_analysis": {
+    "status": "requires_model_changes",
+    "base_interface_variables": [
+      "pred",
+      "target",
+      "mask"
+    ],
+    "param_variables": [
+      "MAX_FLOW",
+      "epsilon",
+      "gamma",
+      "use_var",
+      "var_max",
+      "var_min"
+    ],
+    "mapped_variables": [
+      "epsilon",
+      "gamma",
+      "log_b",
+      "pred",
+      "target",
+      "weight"
+    ],
+    "runtime_can_forward_model_loss_inputs": true,
+    "requires_model_output_extension": true,
+    "requires_extra_prediction_heads": true,
+    "loss_only_pipeline_compatible": false,
+    "auto_experiment_supported": true,
+    "extra_required_variables": [
+      "log_b",
+      "weight"
+    ],
+    "extra_required_symbols": [
+      "LOG_B_SYMBOL_TODO",
+      "WEIGHT_SYMBOL_TODO"
+    ],
+    "head_friendly_variables": [
+      "log_b",
+      "weight"
+    ],
+    "unclear_extra_variables": [],
+    "feature_like_variables": [],
+    "declared_adapter_heads": [
+      "log_b",
+      "weight"
+    ],
+    "missing_adapter_heads": [],
+    "adapter_config_source": "declared",
+    "structure_hints": {
+      "loss_defined_inside_model_forward": true,
+      "model_returns_structured_outputs": true,
+      "uses_feature_or_hidden_state_terms": true,
+      "uses_pretrained_or_adversarial_terms": false,
+      "uses_multi_stage_or_multi_scale_terms": true,
+      "uses_distributional_aux_heads": true,
+      "explicit_loss_inputs_container": false,
+      "detected_aux_variables": [
+        "weight",
+        "log_b"
+      ],
+      "evidence_paths": {
+        "forward_loss": [
+          "core/raft.py"
+        ],
+        "structured_outputs": [
+          "train.py",
+          "core/raft.py"
+        ],
+        "feature_terms": [
+          "core/raft.py"
+        ],
+        "external_terms": [],
+        "multi_stage_terms": [],
+        "explicit_loss_inputs": []
+      }
+    },
+    "simple_formula": false,
+    "change_level": 4,
+    "change_level_label": "model_output_extension",
+    "change_level_reasons": [
+      "Formula needs extra loss inputs that look like lightweight prediction heads: log_b, weight",
+      "Paper/code hints indicate multi-stage or multi-scale supervision",
+      "Paper code appears to compute or couple loss logic inside model.forward"
+    ],
+    "recommended_integration_path": "extend_model_outputs",
+    "minimal_change_possible": false,
+    "requires_model_changes": true,
+    "can_use_original_loss_factory_directly": false,
+    "issues": [
+      "formula requires additional model-provided loss inputs; auto experiment must enable sandbox_adapter heads for: log_b, weight",
+      "formula likely needs deeper integration than loss-only migration; recommended path: extend_model_outputs"
+    ],
+    "notes": "Change levels: L1=params only, L2=spec-driven loss recipe, L3=loss_inputs adapter/wrapper, L4=model output extension, L5=model surgery. The sandbox runtime can forward extra kwargs to sandbox_loss when using a sandbox model adapter that exposes extra loss inputs, but change_level>=4 means the original SR code likely needs deeper integration than a loss-only patch."
+  }
+}

@@ -1,0 +1,36 @@
+status: review_required
+recipe_status: ready
+recipe_reason: Recognized mixture Laplace negative log-likelihood pattern
+loss:
+  mode: spec_driven
+  recipe: masked_mixture_laplace_nll
+  params:
+    MAX_FLOW: 400
+    gamma: 0.85
+    use_var: true
+    var_min: 0
+    var_max: 10
+    epsilon: 1.0e-08
+  bindings:
+    pred: pred
+    target: target
+    log_b: loss_inputs.log_b
+    weight: loss_inputs.weight
+change_level: 4
+change_level_label: model_output_extension
+change_level_reasons:
+- 'Formula needs extra loss inputs that look like lightweight prediction heads: log_b,
+  weight'
+- Paper/code hints indicate multi-stage or multi-scale supervision
+- Paper code appears to compute or couple loss logic inside model.forward
+recommended_path: extend_model_outputs
+recommended_integration_path: extend_model_outputs
+requires_model_changes: true
+minimal_change_possible: false
+can_use_original_loss_factory_directly: false
+issues:
+- 'formula requires additional model-provided loss inputs; auto experiment must enable
+  sandbox_adapter heads for: log_b, weight'
+- 'formula likely needs deeper integration than loss-only migration; recommended path:
+  extend_model_outputs'
+review_required: true

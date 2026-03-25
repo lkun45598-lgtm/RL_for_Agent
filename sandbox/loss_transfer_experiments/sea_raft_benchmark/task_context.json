@@ -1,0 +1,872 @@
+{
+  "status": "context_ready",
+  "paper_slug": "sea_raft_benchmark",
+  "inputs": {
+    "paper_pdf_path": "Benchmark/SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow.pdf",
+    "code_repo_path": "Benchmark/SEA-RAFT-main",
+    "loss_ir_yaml": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/loss_ir.yaml",
+    "dataset_root": "/data1/user/lz/RL_data_test"
+  },
+  "paths": {
+    "experiment_dir": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark",
+    "task_context_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/task_context.json",
+    "loss_ir_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/loss_ir.yaml",
+    "loss_formula_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/loss_formula.json",
+    "loss_spec_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/loss_spec.yaml",
+    "trajectory_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/trajectory.jsonl",
+    "analysis_plan_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/analysis_plan.json"
+  },
+  "prepared_context": {
+    "paper": {
+      "success": true,
+      "paper_pdf_path": "Benchmark/SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow.pdf",
+      "backend": "pymupdf",
+      "page_count": 19,
+      "metadata": {
+        "title": "SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow",
+        "author": "",
+        "subject": "",
+        "creator": "LaTeX with hyperref"
+      },
+      "abstract": ". We introduce SEA-RAFT, a more simple, efficient, and ac-\ncurate RAFT for optical flow. Compared with RAFT, SEA-RAFT is\ntrained with a new loss (mixture of Laplace). It directly regresses an\ninitial flow for faster convergence in iterative refinements and intro-\nduces rigid-motion pre-training to improve generalization. SEA-RAFT\nachieves state-of-the-art accuracy on the Spring benchmark with a 3.69\nendpoint-error (EPE) and a 0.36 1-pixel outlier rate (1px), representing\n22.9% and 17.8% error reduction from best published results. In addi-\ntion, SEA-RAFT obtains the best cross-dataset generalization on KITTI\nand Spring. With its high efficiency, SEA-RAFT operates at least 2.3×\nfaster than existing methods while maintaining competitive performance.\nThe code is publicly available at https://github.com/princeton-vl/SEA-\nRAFT.\n1\nIntroduction\nOptical flow is a fundamental task in low-level vision and aims to estimate per-\npixel 2D motion between video frames. It is useful for various downstream tasks\nincluding action recognition [39, 49, 67], video in-painting [10, 22, 60], frame in-\nterpolation [15,27,61], 3D reconstruction and synthesis [33,69].\nAlthough traditionally formulated as an optimization problem [5,13,62], al-\nmost all recent methods are based on deep learning [6,8,11,14,24,29,42–45,48,50,\n54–57,63,66,68]. In particular, many state-of-the-art methods [14,29,43,44,50,66]\nhave adopted architectures based on RAFT [50], which uses a recurrent network\nto iteratively refine a flow field.\nIn this paper, we introduce SEA-RAFT, a new variant of RAFT that is\nmore efficient and accurate. When compared against all existing approaches,\nSEA-RAFT has the best accuracy-efficiency Pareto frontier (Fig. 1):\n– Accuracy: On Spring [35], SEA-RAFT achieves a new state of the art, outper-\nforming the next best by a large margin: 18% error reduction on 1px-outlier\nrate (3.686 vs. 4.482) and 24% error reduction on endpoint-error (0.363 vs.\n0.471). On Sintel [3] and KITTI [36], it outperforms all other methods that\nhave similar computational costs.\n– Efficiency: On each benchmark tested, SEA-RAFT runs at least 2.3× faster\nthan existing methods that have comparable accuracy. Our smallest model,\narXiv:2405.14793v1  [cs.CV]  23 May 2024",
+      "sections": [
+        {
+          "heading": "1\nIntroduction",
+          "text": "Optical flow is a fundamental task in low-level vision and aims to estimate per-\npixel 2D motion between video frames. It is useful for various downstream tasks\nincluding action recognition [39, 49, 67], video in-painting [10, 22, 60], frame in-\nterpolation [15,27,61], 3D reconstruction and synthesis [33,69].\nAlthough traditionally formulated as an optimization problem [5,13,62], al-\nmost all recent methods are based on deep learning [6,8,11,14,24,29,42–45,48,50,\n54–57,63,66,68]. In particular, many state-of-the-art methods [14,29,43,44,50,66]\nhave adopted architectures based on RAFT [50], which uses a recurrent network\nto iteratively refine a flow field.\nIn this paper, we introduce SEA-RAFT, a new variant of RAFT that is\nmore efficient and accurate. When compared against all existing approaches,\nSEA-RAFT has the best accuracy-efficiency Pareto frontier (Fig. 1):\n– Accuracy: On Spring [35], SEA-RAFT achieves a new state of the art, outper-\nforming the next best by a large margin: 18% error reduction on 1px-outlier\nrate (3.686 vs. 4.482) and 24% error reduction on endpoint-error (0.363 vs.\n0.471). On Sintel [3] and KITTI [36], it outperforms all other methods that\nhave similar computational costs.\n– Efficiency: On each benchmark tested, SEA-RAFT runs at least 2.3× faster\nthan existing methods that have comparable accuracy. Our smallest model,\narXiv:2405.14793v1  [cs.CV]  23 May 2024"
+        },
+        {
+          "heading": "2\nY. Wang et al.",
+          "text": "End-Point-Error\n0.39\n0.4\n0.41\n0.42\n0.43\n0.44\n0.45\n0.46"
+        },
+        {
+          "heading": "0.47\nInference Latency (ms)",
+          "text": "10\n100\n1000"
+        },
+        {
+          "heading": "10000\nSEA-RAFT(S)",
+          "text": "SEA-RAFT(M)\nMS-RAFT+\nCRAFT\nSKFlow\nGMFlow+\nMatchFlow\nDIP\nFlowFormer++\nRPKNet\nGMA\nRAFT\nMACs (G)\n0\n1500\n3000\n4500"
+        },
+        {
+          "heading": "6000\nSEA-RAFT(S)",
+          "text": "SEA-RAFT(M)\nMS-RAFT+\nCRAFT\nSKFlow\nGMFlow+\nMatchFlow\nDIP\nFlowFormer++\nRPKNet\nGMA\nRAFT\n24x faster\n11x smaller\nFig. 1: Zero-shot performance of SEA-RAFT and existing methods on the Spring [35]\ntraining split. Latency is measured on an RTX3090 with a batch size of 1 and input\nresolution 540 × 960. SEA-RAFT has an accuracy close to the best one achieved by\nMS-RAFT+ [19] but is 11× smaller and 24× faster.\nwhich still outperforms all other methods on Spring, can run at 21fps when\nprocessing 1080p images on an RTX3090, 3× faster than the original RAFT.\nWe achieve this by introducing a combination of improvements over the orig-\ninal RAFT:\n– Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net-\nwork to predict parameters of a mixture of Laplace distributions to maximize\nthe log-likelihood of the ground truth flow. As we will demonstrate, this new\nloss reduces overfitting to ambiguous cases and improves generalization.\n– Directly Regressed Initial Flow: Instead of initializing the flow field to zero\nbefore iterative refinement, we directly predict the initial flow by reusing the\nexisting context encoder and feeding it the stacked input frames. This simple\nchange introduces minimal overhead but is surprisingly effective in reducing\nthe number of iterations and improving efficiency.\n– Rigid-Flow Pre-Training: We find that pre-training on TartanAir [52], which\ncan significantly improve generalization, despite the limited diversity of flow,\nwhich is induced purely by camera motion in a static scene.\nThese improvements are novel in the context of RAFT-style methods for\noptical flow. Moreover, they are orthogonal to the improvements proposed in\nexisting RAFT-style methods, which focus on replacing certain blocks with newer\ndesigns, such as replacing convolutional blocks with transformers.\nBesides the main improvements above, SEA-RAFT also incorporates archi-\ntectural changes that greatly simplify the original RAFT. In particular, we find\nthat certain custom designs of the original RAFT are unnecessary and can be\nreplaced with standard off-the-shelf modules. For example, the original feature\nencoder and context encoder were custom-designed and must use different nor-\nmalization layers for stable training; we replaced each with a standard ResNet.\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow"
+        },
+        {
+          "heading": "3\nIn addition, we replace the original convolutional GRU with a simple RNN con-",
+          "text": "sisting entirely of ConvNext blocks. Such simplifications make it easy for SEA-\nRAFT to incorporate new neural building blocks and scale to larger datasets.\nWe perform extensive experiments to evaluate SEA-RAFT on standard bench-\nmarks including Spring, Sintel, and KITTI. We also validate the effectiveness of\nour improvements through ablation studies."
+        },
+        {
+          "heading": "2\nRelated Works",
+          "text": "Estimating Optical Flow Classical approaches treated optical flow as an opti-\nmization problem that maximizes visual similarity between corresponding pixels,\nwith strong regularization. [5,13,62]. Current methods [6,9,14,16–19,24,30,31,\n42–45,48,50,54–57,65,66,68] are mostly based on deep learning. FlowNets [9,17]\nregarded optical flow as a dense regression problem and used stacked convolu-\ntion blocks for prediction. DCNet [58] and PWC-Net [45] introduced 4D cost-\nvolume to explicitly model pixel correspondence. RAFT [50] further combined\nmulti-scale 4D cost-volume with recurrent iterative refinements, achieving large\nimprovements and spawning many follow-ups [14,19,30,31,43,44,48,66,68].\nOur method is a new variant of RAFT [50] with several improvements includ-\ning a new loss function, direct regression of initial flow, rigid-flow pre-training,\nand architectural simplifications. All of these improvements are new compared\nto existing RAFT variants. In particular, our direct regression of initial flow is\nnew compared to existing efficient RAFT variants [6,11,37], which mainly focus\non efficient implementations of RAFT modules. This direct regression is a simple\nchange with minimal overhead, but substantially reduces the number of RAFT\niterations needed.\nData for Optical Flow FlyingChairs and FlyingThings3D [9,34] are commonly\nused datasets for optical flow. They provide a large amount of synthetic data but\nhave limited realism. Sintel [3], VIPER [41], Infinigen [40], and Spring [35] are\nmore realistic, using open-source 3D animations, games or procedurally gener-\nated scenes. Besides synthetic data, Middlebury, KITTI, and HD1K [1,12,23,36]\nprovide annotations for real-world image pairs. These datasets are limited in both\nquantity and diversity due to the difficulty of accurately annotating optical flow\nin the real world. To leverage more data, several methods [8,42,54,55] pre-train\ntheir models on different tasks. MatchFlow [8] pre-trains on geometric image\nmatching (GIM) using MegaDepth [26]. Croco-Flow [54, 55], DDVM [42], and\nFlowformer++ [43] pre-train on unlabeled data. We pre-train SEA-RAFT on\nrigid flow using TartanAir [52]. Though TartanAir [52] has been used in other\nmethods such as DDVM [42] and CroCo-Flow [54,55], our adoption of rigid-flow\npre-training is new in the context of RAFT-style methods.\nPredicting Probability Distributions Predicting probability distributions is\na common practice in computer vision [2,4,25,32,47,51,53,64]. In tasks closely\nrelated to optical flow such as keypoint matching [4,47,51,64], the variance of the\nprobability distribution reflects uncertainty of predictions and therefore is useful"
+        },
+        {
+          "heading": "4\nY. Wang et al.",
+          "text": "ResNet\nResNet\n4D cost volume\nInitial Prediction\nRNN\n× N\nRefined Predictions\nRigid-Flow  \nPre-training\nOptical Flow  \nTraining\nTraining Pipeline\nModel Architecture and Supervision\nMixture of Laplace Loss\nFig. 2: Compared with RAFT [50], SEA-RAFT introduces (1) rigid-flow pre-training,\n(2) mixture of Laplace loss, and (3) direct regression of initial flow.\nfor many applications. For example, LoFTR [47] filters out uncertain matching\npairs. Aspanformer [4] adjusts the look-up radius based on uncertainty.\nTo handle the ambiguity caused by heavy occlusion, SEA-RAFT predicts a\nmixture of Laplace (MoL) distribution. Although MoL has been used in keypoint\nmatching methods such as PDC-Net+ [51], our use of MoL is new in the context\nof RAFT-style methods. In addition, our formulation is different in that we\nrequire one mixture component to have a constant variance, making it equivalent\nto the L1 loss that aligns better with the optical flow evaluation metrics. This\ndifference is crucial for achieving competitive performance in optical flow, where\nevery pixel needs accurate correspondence, unlike keypoint matching, where a\nsubset of reliable matches suffices."
+        },
+        {
+          "heading": "3\nMethod",
+          "text": "In this section, we first describe the iterative refinement in RAFT and then\nintroduce the improvements that lead to SEA-RAFT."
+        },
+        {
+          "heading": "3.1\nIterative refinement",
+          "text": "Given two adjacent RGB frames, RAFT predicts a field of pixel-wise 2D vectors\nthrough iterative refinement that consists of two parts: (1) feature and context\nencoders, which transform images into lower-resolution dense features, and (2)\nan RNN unit, which iteratively refines the predictions.\nGiven two images I1, I2 ∈RH×W ×3, the feature encoder F takes I1, I2 as\ninputs separately and outputs a lower-resolution feature F(I1), F(I2) ∈Rh×w×D.\nThe context encoder C takes source image I1 as input and outputs a context\nfeature C(I1) ∈Rh×w×D. A multi-scale 4D correlation volume {Vk} is then built\nwith the features from feature encoder F:\n  V _k = F (I_1) \\circ \\texttt {AvgPool}(F(I_2), 2^k)^{\\top }\\in \\mathbb {R}^{h\\times w\\times \\frac {h}{2^k}\\times \\frac {w}{2^k}},\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n5\nwhere ◦represents the correlation operator, which computes similarities (as dot\nproducts of feature vectors) between all pairs of pixels across two feature maps.\nSeveral works [18, 19] have explored the optimal choices of the number of\nlevels in the cost volume(k) and the feature resolution (h, w). In SEA-RAFT,\nwe simply follow the original setting in RAFT [50]: (h, w) = 1\n8(H, W), k = 4.\nRAFT iteratively refines a flow prediction µ. Initially, µ is set to be all zeros.\nEach refinement step uses the current flow prediction µ to fetch a DM-dim\nmotion feature M from the multi-scale correlation volume {Vk} with a look-up\nradius r:\n  M = \\texttt {MotionEncoder }( \\te x ttt {LookUp}(\\{V_k\\}, \\mu , r)) \\in \\mathbb {R}^{h\\times w\\times D_M} ,\nwhere the Lookup operator returns a motion feature vector for each pixel in I1,\nconsisting of similarities between the pixel in I1 and its current correspondence’s\nneighboring pixels in I2 within the radius r. The motion feature vector is further\ntransformed by a motion encoder.\nExisting works [4, 11, 21] have explored dynamic radius and look-up when\nobtaining the motion features from {Vk}. For simplicity of design, SEA-RAFT\nfollows the original RAFT and sets the look-up radius r = 4 to a fixed constant.\nThe motion feature M is fed into the RNN cell along with hidden state h and\ncontext feature C(I1). From the new hidden state h′, the residual flow ∆µ is\nregressed by a 2-layer FlowHead:\n  h ' &= \\ te xttt {RNN}(h, M, C(I_1))\\\\ \\Delta \\mu &= \\texttt {FlowHead}(h')\nMethods using RAFT-Style iterative refinement [14, 50] usually need many\niterations: 12 in training and as many as 32 in inference. As a result, RNN-based\niterative refinement is a significant bottleneck in latency. Though there have been\nattempts [6,11] to reduce the number of iterations, the performance drastically\ndrops with fewer iterations. In contrast, SEA-RAFT only needs 4 iterations in\ntraining and up to 12 iterations in inference to achieve competitive performance."
+        },
+        {
+          "heading": "3.2\nMixture-of-Laplace Loss",
+          "text": "Most prior works are supervised using an endpoint-error loss on all pixels. How-\never, optical flow training data often contains ambiguous, unpredictable samples,\nwhich can dominate this loss empirically.\nAmbiguous Cases Ambiguous cases of optical flow can arise with heavy occlu-\nsion Fig. 3. While in many cases the motion of occluded pixels can be predicted,\nsometimes the ambiguity can be too large to predict a single outcome. We exam-\nined 10 samples with the highest endpoint-error in the training and validation\nsets of FlyingChairs [9] and found that ambiguous cases dominate the error.\nReview of Probabilistic Regression Prior works for image-matching have\nproposed probabilistic losses to enable their model to express aleatoric or epis-\ntemic uncertainty [4,47,51,51,53,55,64]. These approaches regress the parameters"
+        },
+        {
+          "heading": "6\nY. Wang et al.",
+          "text": "Source frame\nTarget frame\nUncertainty (Ours)\nError of RAFT\nError of GMFlow\nFig. 3: Ambiguous cases can occur frequently in training data where flow is unpre-\ndictable due to occlusion. Such cases can dominate the L1 loss (shown as an error\nmap) used by current methods [50,56]. Our new training loss allows the model to ac-\ncount for such uncertainty.\nof the probabilistic model and maximize the log-likelihood of the ground truth\nduring training.\nGiven an image pair {I1, I2} and the flow ground truth µgt, the training loss is\n  \\ma t h cal  {L} _ {prob} = -\\log {p_{\\theta }(\\mu =\\mu _{gt}|I_{1}, I_{2})}\nwhere the probability density function pθ is parameterized by the network. Prior\nwork has formulated pθ as a Gaussian or a Laplace distribution with a predicted\nmean and variance. For example, we can formulate a naive version of proba-\nbilistic regression by assuming: (1) pθ is Laplace with mean µ ∈RH×W ×2 and\nscale b ∈RH×W ×1 predicted by the network, (2) the flow distribution is pixel-\nwisely independent, and (3) the x-direction flow and the y-direction flow are\nindependent but share the same scale parameter b:\n  \\m a\nt\nhc\na\nl\n \n{\nL}_{ Lap} &=  \\frac { 1} { HW}\\ sum \n_{u}\\ su\nm _{v}{(\\log {2b(u, v)} + \\frac {\\|\\mu _{gt}(u, v) - \\mu (u, v)\\|_1}{2b(u, v)})}\n(1)\nwhere u, v are indices to the pixels. The Laplace loss can be regarded as an\nextended version of L1 loss with an extra penalty term b. During inference, µ\nrepresents the flow prediction, and the scale factor b provides an estimation of\nuncertainty. However, we find this naive probabilistic regression does not work\nwell on optical flow, which has also been pointed out by prior work [64].\nMixture of Laplace One reason that naive probabilistic regression performs\npoorly is numerical instability as the loss contains a log term. To address this\nissue, we regress b(u, v) directly in log-space. This approach makes training more\nstable compared to previous approaches which clamp b to [ϵ, ∞), where ϵ is a\nsmall positive number.\nAnother reason that naive probabilistic regression performs poorly is that it\ndeviates from the standard endpoint-error metric, which only cares about the\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow"
+        },
+        {
+          "heading": "7\nSource frame",
+          "text": "Flow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-\nitively, a higher α means the flow prediction of this pixel is more “ordinary”\ninstead of “ambiguous”. Mathematically, a higher α makes LmoL behave like an\nL1 loss. In Sec. 4.3, we then show that this property leads to better accuracy.\nNote that though the mixture model has been used in keypoint matching [4,\n47, 51], its application to optical flow requires a different formulation because\nthe goal is substantially different. In keypoint matching, the goal is to identify\na subset of reliable matches for downstream applications such as camera pose\nestimation. Predicting uncertainty serves to filter out unreliable matches, and\nthere is no explicit penalty for predicting few correspondences. As a result, it is\nnot essential for them to align a mixing component to L1 loss. In optical flow,\nwe are evaluated on the flow prediction for every pixel.\nImplementation Details We set an upper bound for β to 10 in the loss to make\nthe training more stable. We also re-predict α and β every update iteration. We\ncan similarly define the probabilistic sequence loss as:"
+        },
+        {
+          "heading": "8\nY. Wang et al.",
+          "text": "Sintel (test)\nKITTI2015 (test)\nMiddlebury (train)\nFig. 5: Visualization on Sintel [3], KITTI [36], and Middlebury [1].\nLall =\nN\nX\ni=1\nγN−iLi\nMoL\n(3)\nwhere Li\nmix denotes the probabilistic loss in iteration i, N denotes the number\nof iterations, and γ < 1 exponentially downweights the early iterations. We\nempirically observe that our method significantly reduces the number of update\niterations needed in inference. In fact, N = 4 is sufficient for SEA-RAFT to take\nfirst place on the Spring [35] benchmark. We provide detailed ablations in Tab. 4."
+        },
+        {
+          "heading": "3.3\nDirect Regression of Initial Flow",
+          "text": "RAFT-style iterative refinements [8,14,31,37,48,66] typically zero-initialize the\nflow field. However, zero-initialization may deviate substantially from the ground\ntruth, thus needing many iterations. In SEA-RAFT, we borrow an idea from\nthe FlowNet family of methods [9, 17] to predict an initial estimate of optical\nflow from the context encoder, given both frames as input. We also predict an\nassociated MoL (see Sec. 3.2).\nThis simple modification also significantly improves the convergence speed of\nthe iterative refinement framework, allowing one to use fewer iterations during\ninference. Detailed ablations are shown in Tab. 4."
+        },
+        {
+          "heading": "3.4\nLarge-Scale Rigid-Flow Pre-Training",
+          "text": "Most prior works train on a small number of datasets with limited size, diversity\nand realism [9,34]. To improve generationalization, we pre-train SEA-RAFT on\nTartanAir [52], which provides optical flow annotations between a pair of (non-\nrectified) stereo cameras. This type of motion field is a special case of optical\nflow due to viewpoint change in a rigid static scene. Despite its limited motion\ndiversity, it enables SEA-RAFT to train on data with higher realism and scene\ndiversity, leading to better generalization.\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n9"
+        },
+        {
+          "heading": "3.5\nSimplifications",
+          "text": "We also provide a few architecture changes that greatly simplify the original\nRAFT [50]. First, we adopt truncated, ImageNet [7] pre-trained ResNets for the\nbackbones. We also substitute the ConvGRU in RAFT with two ConvNeXt [28]\nblocks, which we show provides better efficiency and training stability. The de-\ntailed ablations of these changes are shown in Tab. 4."
+        },
+        {
+          "heading": "4\nExperiments",
+          "text": "We evaluate SEA-RAFT on Spring [35], KITTI [12], and Sintel [3]. Follow-\ning previous works, we also incorporate FlyingChairs [9], FlyingThings [34], and\nHD1K [23] into our training pipeline. To verify the effectiveness of TartanAir [52]\nrigid-flow pre-training, we provide the performance gain from it in different set-\ntings.\nModel Details SEA-RAFT is implemented in PyTorch [38]. There are three\ndifferent types of SEA-RAFT and we denote them as SEA-RAFT(S/M/L). The\nonly differences among them are the backbone choices and the number of itera-\ntions in inference. Specifically, SEA-RAFT(S) uses the first 6 layers of ResNet-18\nas the feature/context encoder, and SEA-RAFT(M) uses the first 13 layers of\nResNet-34. The pre-trained weights we use are downloaded from torchvision.\nSEA-RAFT(S) and SEA-RAFT(M) use the same architecture for the recurrent\nunits and keep the number of iterations N = 4 in both training and inference.\nSEA-RAFT(L) can be regarded as an extension based on SEA-RAFT(M): they\nshare the same weights, but SEA-RAFT(L) uses N = 12 iterations in inference.\nFollowing RAFT [50], we stop the gradient for µ when computing µ′ = µ + ∆µ\nand only propagate the gradient for residual flow ∆µ.\nTraining Details As mentioned in Sec. 3.4, We pre-train SEA-RAFT on Tar-\ntanAir [52] for 300k steps with a batch size of 32, input resolution 480 × 640\nand learning rate 4 × 10−4. Similar to RAFT [50], MaskFlowNet [65] and PWC-\nNet+ [45], we then train our models on FlyingChairs [9] for 100k steps with a\nbatch size of 16, input resolution 368×496, learning rate 2.5×10−4 and FlyingTh-\nings3D [34] for 120k steps with a batch size of 32, input resolution 432 × 960,\nlearning rate 4 × 10−4 (denoted as \"C+T\" following previous works). For the\nsubmissions on Sintel [3] benchmark, we fine-tune the model from \"C+T\" on a\nmixture of Sintel [3], FlyingThings3D clean pass [34], KITTI [12] and HD1K [23]\nfor 300k steps with a batch size of 32, input resolution 432×960 and learning rate\n4×10−4 (denoted as \"C+T+S+K+H\" following previous works). Different from\nprevious methods, we reduce the percentage of Sintel [3] in the mixture dataset,\nwhich is usually more than 70% in previous papers. Details will be mentioned\nin the supplementary material. For KITTI [12] submissions, we fine-tune our\nmodels from \"C+T+S+K+H\" on the KITTI training set for extra 10k steps\nwith a batch size of 16, input resolution 432 × 960 and learning rate 10−4. For\nSpring [35] submissions, we fine-tune our models from \"C+T+S+K+H\" on the"
+        },
+        {
+          "heading": "10\nY. Wang et al.",
+          "text": "Extra Data\nMethod\nSpring (train)\nSpring (test)\nFine-tune 1px↓EPE↓\n1px↓\nEPE↓\nFl↓\nWAUC↑\nPWC-Net [45]\n✗\n-\n-\n82.27∗2.288∗4.889∗45.670∗\nFlowNet2 [17]\n✗\n-\n-\n6.710∗1.040∗2.823∗90.907∗\nRAFT [50]\n✗\n4.788 0.448\n6.790∗1.476∗3.198∗90.920∗\nGMA [20]\n✗\n4.763 0.443\n7.074∗0.914∗3.079∗90.722∗\nRPKNet [37]\n✗\n4.472 0.416\n4.809\n0.657\n1.756"
+        },
+        {
+          "heading": "92.638\nDIP [68]",
+          "text": "✗\n4.273 0.463\n-\n-\n-\n-\nSKFlow [48]\n✗\n4.521 0.408\n-\n-\n-\n-\nGMFlow [56]\n✗\n29.49 0.930 10.355∗0.945∗2.952∗82.337∗\nGMFlow+ [57]\n✗\n4.292 0.433\n-\n-\n-\n-\nFlowformer [14]\n✗\n4.508 0.470\n6.510∗0.723∗2.384∗91.679∗\nCRAFT [44]\n✗\n4.803 0.448\n-\n-\n-\n-\nSEA-RAFT(S)\n✗\n4.077 0.415\n-\n-\n-\n-\nSEA-RAFT(M)\n✗\n4.060 0.406\n-\n-\n-\n-\nMegaDepth [26]\nMatchFlow(G) [8]\n✗\n4.504 0.407\n-\n-\n-\n-\nYouTube-VOS [59] Flowformer++ [43]\n✗\n4.482 0.447\n-\n-\n-\n-\nVIPER [41]\nMS-RAFT+ [19]\n✗\n3.577 0.397\n5.724∗0.643∗2.189∗92.888∗\nTartanAir [52]\nSEA-RAFT(S)\n✗\n4.161 0.410\n-\n-\n-\n-\nTartanAir [52]\nSEA-RAFT(M)\n✗\n3.888 0.406\n-\n-\n-\n-\nCroCo-Pretrain\nCroCoFlow [55]\n✓\n-\n-\n4.565\n0.498\n1.508"
+        }
+      ],
+      "loss_snippets": [
+        {
+          "tag": "loss_keyword",
+          "snippet": "SEA-RAFT: Simple, Efficient, Accurate RAFT\nfor Optical Flow\nYihan Wang, Lahav Lipson, and Jia Deng\nDepartment of Computer Science, Princeton University\n{yw7685, llipson, jiadeng}@princeton.edu\nAbstract. We introduce SEA-RAFT, a more simple, efficient, and ac-\ncurate RAFT for optical flow. Compared with RAFT, SEA-RAFT is\ntrained with a new loss (mixture of Laplace). It directly regresses an\ninitial flow for faster convergence in iterative refinements and intro-\nduces rigid-motion pre-training to improve generalization. SEA-RAFT\nachieves state-of-the-art accuracy on the Spring benchmark with a 3.69\nendpoint-error (EPE) and a 0.36 1-pixel outlier rate (1px), representing\n22.9% and 17.8% error reduction from best published results. In addi-\ntion, SEA-RAFT obtains the best cross-dataset ge"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "ency is measured on an RTX3090 with a batch size of 1 and input\nresolution 540 × 960. SEA-RAFT has an accuracy close to the best one achieved by\nMS-RAFT+ [19] but is 11× smaller and 24× faster.\nwhich still outperforms all other methods on Spring, can run at 21fps when\nprocessing 1080p images on an RTX3090, 3× faster than the original RAFT.\nWe achieve this by introducing a combination of improvements over the orig-\ninal RAFT:\n– Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net-\nwork to predict parameters of a mixture of Laplace distributions to maximize\nthe log-likelihood of the ground truth flow. As we will demonstrate, this new\nloss reduces overfitting to ambiguous cases and improves generalization.\n– Directly Regressed Initial Flow: Instead of initializing the flow field to zero\nbefore iterative refinement, we directly predict the initial flow by reusing the\nexisti"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "th a batch size of 1 and input\nresolution 540 × 960. SEA-RAFT has an accuracy close to the best one achieved by\nMS-RAFT+ [19] but is 11× smaller and 24× faster.\nwhich still outperforms all other methods on Spring, can run at 21fps when\nprocessing 1080p images on an RTX3090, 3× faster than the original RAFT.\nWe achieve this by introducing a combination of improvements over the orig-\ninal RAFT:\n– Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net-\nwork to predict parameters of a mixture of Laplace distributions to maximize\nthe log-likelihood of the ground truth flow. As we will demonstrate, this new\nloss reduces overfitting to ambiguous cases and improves generalization.\n– Directly Regressed Initial Flow: Instead of initializing the flow field to zero\nbefore iterative refinement, we directly predict the initial flow by reusing the\nexisting context encoder and feeding it"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "forms all other methods on Spring, can run at 21fps when\nprocessing 1080p images on an RTX3090, 3× faster than the original RAFT.\nWe achieve this by introducing a combination of improvements over the orig-\ninal RAFT:\n– Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net-\nwork to predict parameters of a mixture of Laplace distributions to maximize\nthe log-likelihood of the ground truth flow. As we will demonstrate, this new\nloss reduces overfitting to ambiguous cases and improves generalization.\n– Directly Regressed Initial Flow: Instead of initializing the flow field to zero\nbefore iterative refinement, we directly predict the initial flow by reusing the\nexisting context encoder and feeding it the stacked input frames. This simple\nchange introduces minimal overhead but is surprisingly effective in reducing\nthe number of iterations and improving efficiency.\n– Rigid-Flow"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "low as a dense regression problem and used stacked convolu-\ntion blocks for prediction. DCNet [58] and PWC-Net [45] introduced 4D cost-\nvolume to explicitly model pixel correspondence. RAFT [50] further combined\nmulti-scale 4D cost-volume with recurrent iterative refinements, achieving large\nimprovements and spawning many follow-ups [14,19,30,31,43,44,48,66,68].\nOur method is a new variant of RAFT [50] with several improvements includ-\ning a new loss function, direct regression of initial flow, rigid-flow pre-training,\nand architectural simplifications. All of these improvements are new compared\nto existing RAFT variants. In particular, our direct regression of initial flow is\nnew compared to existing efficient RAFT variants [6,11,37], which mainly focus\non efficient implementations of RAFT modules. This direct regression is a simple\nchange with minimal overhead, but substantially reduces th"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "ice in computer vision [2,4,25,32,47,51,53,64]. In tasks closely\nrelated to optical flow such as keypoint matching [4,47,51,64], the variance of the\nprobability distribution reflects uncertainty of predictions and therefore is useful\n\n4\nY. Wang et al.\nResNet\nResNet\n4D cost volume\nInitial Prediction\nRNN\n× N\nRefined Predictions\nRigid-Flow \nPre-training\nOptical Flow \nTraining\nTraining Pipeline\nModel Architecture and Supervision\nMixture of Laplace Loss\nFig. 2: Compared with RAFT [50], SEA-RAFT introduces (1) rigid-flow pre-training,\n(2) mixture of Laplace loss, and (3) direct regression of initial flow.\nfor many applications. For example, LoFTR [47] filters out uncertain matching\npairs. Aspanformer [4] adjusts the look-up radius based on uncertainty.\nTo handle the ambiguity caused by heavy occlusion, SEA-RAFT predicts a\nmixture of Laplace (MoL) distribution. Although MoL has been used in keypo"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "hing [4,47,51,64], the variance of the\nprobability distribution reflects uncertainty of predictions and therefore is useful\n\n4\nY. Wang et al.\nResNet\nResNet\n4D cost volume\nInitial Prediction\nRNN\n× N\nRefined Predictions\nRigid-Flow \nPre-training\nOptical Flow \nTraining\nTraining Pipeline\nModel Architecture and Supervision\nMixture of Laplace Loss\nFig. 2: Compared with RAFT [50], SEA-RAFT introduces (1) rigid-flow pre-training,\n(2) mixture of Laplace loss, and (3) direct regression of initial flow.\nfor many applications. For example, LoFTR [47] filters out uncertain matching\npairs. Aspanformer [4] adjusts the look-up radius based on uncertainty.\nTo handle the ambiguity caused by heavy occlusion, SEA-RAFT predicts a\nmixture of Laplace (MoL) distribution. Although MoL has been used in keypoint\nmatching methods such as PDC-Net+ [51], our use of MoL is new in the context\nof RAFT-style methods. In add"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "rmer [4] adjusts the look-up radius based on uncertainty.\nTo handle the ambiguity caused by heavy occlusion, SEA-RAFT predicts a\nmixture of Laplace (MoL) distribution. Although MoL has been used in keypoint\nmatching methods such as PDC-Net+ [51], our use of MoL is new in the context\nof RAFT-style methods. In addition, our formulation is different in that we\nrequire one mixture component to have a constant variance, making it equivalent\nto the L1 loss that aligns better with the optical flow evaluation metrics. This\ndifference is crucial for achieving competitive performance in optical flow, where\nevery pixel needs accurate correspondence, unlike keypoint matching, where a\nsubset of reliable matches suffices.\n3\nMethod\nIn this section, we first describe the iterative refinement in RAFT and then\nintroduce the improvements that lead to SEA-RAFT.\n3.1\nIterative refinement\nGiven two adjacent RGB fr"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "0] usually need many\niterations: 12 in training and as many as 32 in inference. As a result, RNN-based\niterative refinement is a significant bottleneck in latency. Though there have been\nattempts [6,11] to reduce the number of iterations, the performance drastically\ndrops with fewer iterations. In contrast, SEA-RAFT only needs 4 iterations in\ntraining and up to 12 iterations in inference to achieve competitive performance.\n3.2\nMixture-of-Laplace Loss\nMost prior works are supervised using an endpoint-error loss on all pixels. How-\never, optical flow training data often contains ambiguous, unpredictable samples,\nwhich can dominate this loss empirically.\nAmbiguous Cases Ambiguous cases of optical flow can arise with heavy occlu-\nsion Fig. 3. While in many cases the motion of occluded pixels can be predicted,\nsometimes the ambiguity can be too large to predict a single outcome. We exam-\nined 10"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "s 32 in inference. As a result, RNN-based\niterative refinement is a significant bottleneck in latency. Though there have been\nattempts [6,11] to reduce the number of iterations, the performance drastically\ndrops with fewer iterations. In contrast, SEA-RAFT only needs 4 iterations in\ntraining and up to 12 iterations in inference to achieve competitive performance.\n3.2\nMixture-of-Laplace Loss\nMost prior works are supervised using an endpoint-error loss on all pixels. How-\never, optical flow training data often contains ambiguous, unpredictable samples,\nwhich can dominate this loss empirically.\nAmbiguous Cases Ambiguous cases of optical flow can arise with heavy occlu-\nsion Fig. 3. While in many cases the motion of occluded pixels can be predicted,\nsometimes the ambiguity can be too large to predict a single outcome. We exam-\nined 10 samples with the highest endpoint-error in the training and v"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "pts [6,11] to reduce the number of iterations, the performance drastically\ndrops with fewer iterations. In contrast, SEA-RAFT only needs 4 iterations in\ntraining and up to 12 iterations in inference to achieve competitive performance.\n3.2\nMixture-of-Laplace Loss\nMost prior works are supervised using an endpoint-error loss on all pixels. How-\never, optical flow training data often contains ambiguous, unpredictable samples,\nwhich can dominate this loss empirically.\nAmbiguous Cases Ambiguous cases of optical flow can arise with heavy occlu-\nsion Fig. 3. While in many cases the motion of occluded pixels can be predicted,\nsometimes the ambiguity can be too large to predict a single outcome. We exam-\nined 10 samples with the highest endpoint-error in the training and validation\nsets of FlyingChairs [9] and found that ambiguous cases dominate the error.\nReview of Probabilistic Regression Prior work"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "istic Regression Prior works for image-matching have\nproposed probabilistic losses to enable their model to express aleatoric or epis-\ntemic uncertainty [4,47,51,51,53,55,64]. These approaches regress the parameters\n\n6\nY. Wang et al.\nSource frame\nTarget frame\nUncertainty (Ours)\nError of RAFT\nError of GMFlow\nFig. 3: Ambiguous cases can occur frequently in training data where flow is unpre-\ndictable due to occlusion. Such cases can dominate the L1 loss (shown as an error\nmap) used by current methods [50,56]. Our new training loss allows the model to ac-\ncount for such uncertainty.\nof the probabilistic model and maximize the log-likelihood of the ground truth\nduring training.\nGiven an image pair {I1, I2} and the flow ground truth µgt, the training loss is\n \\ma t h cal {L} _ {prob} = -\\log {p_{\\theta }(\\mu =\\mu _{gt}|I_{1}, I_{2})}\nwhere the probability density function pθ is parameterized by"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "ses to enable their model to express aleatoric or epis-\ntemic uncertainty [4,47,51,51,53,55,64]. These approaches regress the parameters\n\n6\nY. Wang et al.\nSource frame\nTarget frame\nUncertainty (Ours)\nError of RAFT\nError of GMFlow\nFig. 3: Ambiguous cases can occur frequently in training data where flow is unpre-\ndictable due to occlusion. Such cases can dominate the L1 loss (shown as an error\nmap) used by current methods [50,56]. Our new training loss allows the model to ac-\ncount for such uncertainty.\nof the probabilistic model and maximize the log-likelihood of the ground truth\nduring training.\nGiven an image pair {I1, I2} and the flow ground truth µgt, the training loss is\n \\ma t h cal {L} _ {prob} = -\\log {p_{\\theta }(\\mu =\\mu _{gt}|I_{1}, I_{2})}\nwhere the probability density function pθ is parameterized by the network. Prior\nwork has formulated pθ as a Gaussian or a Laplace distributi"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "low\nFig. 3: Ambiguous cases can occur frequently in training data where flow is unpre-\ndictable due to occlusion. Such cases can dominate the L1 loss (shown as an error\nmap) used by current methods [50,56]. Our new training loss allows the model to ac-\ncount for such uncertainty.\nof the probabilistic model and maximize the log-likelihood of the ground truth\nduring training.\nGiven an image pair {I1, I2} and the flow ground truth µgt, the training loss is\n \\ma t h cal {L} _ {prob} = -\\log {p_{\\theta }(\\mu =\\mu _{gt}|I_{1}, I_{2})}\nwhere the probability density function pθ is parameterized by the network. Prior\nwork has formulated pθ as a Gaussian or a Laplace distribution with a predicted\nmean and variance. For example, we can formulate a naive version of proba-\nbilistic regression by assuming: (1) pθ is Laplace with mean µ ∈RH×W ×2 and\nscale b ∈RH×W ×1 predicted by the network, (2) the flow"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "1) pθ is Laplace with mean µ ∈RH×W ×2 and\nscale b ∈RH×W ×1 predicted by the network, (2) the flow distribution is pixel-\nwisely independent, and (3) the x-direction flow and the y-direction flow are\nindependent but share the same scale parameter b:\n \\m a\nt\nhc\na\nl\n \n{\nL}_{ Lap} &= \\frac { 1} { HW}\\ sum \n_{u}\\ su\nm _{v}{(\\log {2b(u, v)} + \\frac {\\|\\mu _{gt}(u, v) - \\mu (u, v)\\|_1}{2b(u, v)})}\n(1)\nwhere u, v are indices to the pixels. The Laplace loss can be regarded as an\nextended version of L1 loss with an extra penalty term b. During inference, µ\nrepresents the flow prediction, and the scale factor b provides an estimation of\nuncertainty. However, we find this naive probabilistic regression does not work\nwell on optical flow, which has also been pointed out by prior work [64].\nMixture of Laplace One reason that naive probabilistic regression performs\npoorly is numerical instability as the"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "∈RH×W ×1 predicted by the network, (2) the flow distribution is pixel-\nwisely independent, and (3) the x-direction flow and the y-direction flow are\nindependent but share the same scale parameter b:\n \\m a\nt\nhc\na\nl\n \n{\nL}_{ Lap} &= \\frac { 1} { HW}\\ sum \n_{u}\\ su\nm _{v}{(\\log {2b(u, v)} + \\frac {\\|\\mu _{gt}(u, v) - \\mu (u, v)\\|_1}{2b(u, v)})}\n(1)\nwhere u, v are indices to the pixels. The Laplace loss can be regarded as an\nextended version of L1 loss with an extra penalty term b. During inference, µ\nrepresents the flow prediction, and the scale factor b provides an estimation of\nuncertainty. However, we find this naive probabilistic regression does not work\nwell on optical flow, which has also been pointed out by prior work [64].\nMixture of Laplace One reason that naive probabilistic regression performs\npoorly is numerical instability as the loss contains a log term. To address this\nissue, w"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "can be regarded as an\nextended version of L1 loss with an extra penalty term b. During inference, µ\nrepresents the flow prediction, and the scale factor b provides an estimation of\nuncertainty. However, we find this naive probabilistic regression does not work\nwell on optical flow, which has also been pointed out by prior work [64].\nMixture of Laplace One reason that naive probabilistic regression performs\npoorly is numerical instability as the loss contains a log term. To address this\nissue, we regress b(u, v) directly in log-space. This approach makes training more\nstable compared to previous approaches which clamp b to [ϵ, ∞), where ϵ is a\nsmall positive number.\nAnother reason that naive probabilistic regression performs poorly is that it\ndeviates from the standard endpoint-error metric, which only cares about the\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource fram"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "\\ b et a _1,\n \\b\neta \n_ 2, \\m u ) &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-\nitively, a higher α"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "ta \n_ 2, \\m u ) &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-\nitively, a higher α means the flow p"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "_1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-\nitively, a higher α means the flow prediction of this pixel is more “ordinary”\ninstead of “ambiguous”. Mathem"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-\nitively, a higher α means the flow prediction of this pixel is more “ordinary”\ninstead of “ambiguous”. Mathematically, a higher α makes LmoL behave like an\nL1 loss. In Sec. 4.3, we then show that this property leads to better accuracy.\nNote that though the mixture model has been used in keypoint matching [4,\n47, 51], its application to optical flow requires a different formulation because\nthe goal is substantially different. In keypoint matching, the goal is to identify\na subset of reliable matches for downstream applications such as camera pose\nestimation. Predicting uncertainty serves to filter out unrel"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "application to optical flow requires a different formulation because\nthe goal is substantially different. In keypoint matching, the goal is to identify\na subset of reliable matches for downstream applications such as camera pose\nestimation. Predicting uncertainty serves to filter out unreliable matches, and\nthere is no explicit penalty for predicting few correspondences. As a result, it is\nnot essential for them to align a mixing component to L1 loss. In optical flow,\nwe are evaluated on the flow prediction for every pixel.\nImplementation Details We set an upper bound for β to 10 in the loss to make\nthe training more stable. We also re-predict α and β every update iteration. We\ncan similarly define the probabilistic sequence loss as:\n\n8\nY. Wang et al.\nSintel (test)\nKITTI2015 (test)\nMiddlebury (train)\nFig. 5: Visualization on Sintel [3], KITTI [36], and Middlebury [1].\nLall =\nN\nX\ni=1\nγN−iLi\nM"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "dentify\na subset of reliable matches for downstream applications such as camera pose\nestimation. Predicting uncertainty serves to filter out unreliable matches, and\nthere is no explicit penalty for predicting few correspondences. As a result, it is\nnot essential for them to align a mixing component to L1 loss. In optical flow,\nwe are evaluated on the flow prediction for every pixel.\nImplementation Details We set an upper bound for β to 10 in the loss to make\nthe training more stable. We also re-predict α and β every update iteration. We\ncan similarly define the probabilistic sequence loss as:\n\n8\nY. Wang et al.\nSintel (test)\nKITTI2015 (test)\nMiddlebury (train)\nFig. 5: Visualization on Sintel [3], KITTI [36], and Middlebury [1].\nLall =\nN\nX\ni=1\nγN−iLi\nMoL\n(3)\nwhere Li\nmix denotes the probabilistic loss in iteration i, N denotes the number\nof iterations, and γ < 1 exponentially downweights the e"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "unreliable matches, and\nthere is no explicit penalty for predicting few correspondences. As a result, it is\nnot essential for them to align a mixing component to L1 loss. In optical flow,\nwe are evaluated on the flow prediction for every pixel.\nImplementation Details We set an upper bound for β to 10 in the loss to make\nthe training more stable. We also re-predict α and β every update iteration. We\ncan similarly define the probabilistic sequence loss as:\n\n8\nY. Wang et al.\nSintel (test)\nKITTI2015 (test)\nMiddlebury (train)\nFig. 5: Visualization on Sintel [3], KITTI [36], and Middlebury [1].\nLall =\nN\nX\ni=1\nγN−iLi\nMoL\n(3)\nwhere Li\nmix denotes the probabilistic loss in iteration i, N denotes the number\nof iterations, and γ < 1 exponentially downweights the early iterations. We\nempirically observe that our method significantly reduces the number of update\niterations needed in inference. In fact, N"
+        },
+        {
+          "tag": "loss_keyword",
+          "snippet": "w prediction for every pixel.\nImplementation Details We set an upper bound for β to 10 in the loss to make\nthe training more stable. We also re-predict α and β every update iteration. We\ncan similarly define the probabilistic sequence loss as:\n\n8\nY. Wang et al.\nSintel (test)\nKITTI2015 (test)\nMiddlebury (train)\nFig. 5: Visualization on Sintel [3], KITTI [36], and Middlebury [1].\nLall =\nN\nX\ni=1\nγN−iLi\nMoL\n(3)\nwhere Li\nmix denotes the probabilistic loss in iteration i, N denotes the number\nof iterations, and γ < 1 exponentially downweights the early iterations. We\nempirically observe that our method significantly reduces the number of update\niterations needed in inference. In fact, N = 4 is sufficient for SEA-RAFT to take\nfirst place on the Spring [35] benchmark. We provide detailed ablations in Tab. 4.\n3.3\nDirect Regression of Initial Flow\nRAFT-style iterative refinements [8,14,31,37,48,66] ty"
+        }
+      ],
+      "full_text_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/paper_full_text.txt",
+      "full_text_chars": 50093,
+      "full_text_excerpt": "SEA-RAFT: Simple, Efficient, Accurate RAFT\nfor Optical Flow\nYihan Wang, Lahav Lipson, and Jia Deng\nDepartment of Computer Science, Princeton University\n{yw7685, llipson, jiadeng}@princeton.edu\nAbstract. We introduce SEA-RAFT, a more simple, efficient, and ac-\ncurate RAFT for optical flow. Compared with RAFT, SEA-RAFT is\ntrained with a new loss (mixture of Laplace). It directly regresses an\ninitial flow for faster convergence in iterative refinements and intro-\nduces rigid-motion pre-training to improve generalization. SEA-RAFT\nachieves state-of-the-art accuracy on the Spring benchmark with a 3.69\nendpoint-error (EPE) and a 0.36 1-pixel outlier rate (1px), representing\n22.9% and 17.8% error reduction from best published results. In addi-\ntion, SEA-RAFT obtains the best cross-dataset generalization on KITTI\nand Spring. With its high efficiency, SEA-RAFT operates at least 2.3×\nfaster than existing methods while maintaining competitive performance.\nThe code is publicly available at https://github.com/princeton-vl/SEA-\nRAFT.\n1\nIntroduction\nOptical flow is a fundamental task in low-level vision and aims to estimate per-\npixel 2D motion between video frames. It is useful for various downstream tasks\nincluding action recognition [39, 49, 67], video in-painting [10, 22, 60], frame in-\nterpolation [15,27,61], 3D reconstruction and synthesis [33,69].\nAlthough traditionally formulated as an optimization problem [5,13,62], al-\nmost all recent methods are based on deep learning [6,8,11,14,24,29,42–45,48,50,\n54–57,63,66,68]. In particular, many state-of-the-art methods [14,29,43,44,50,66]\nhave adopted architectures based on RAFT [50], which uses a recurrent network\nto iteratively refine a flow field.\nIn this paper, we introduce SEA-RAFT, a new variant of RAFT that is\nmore efficient and accurate. When compared against all existing approaches,\nSEA-RAFT has the best accuracy-efficiency Pareto frontier (Fig. 1):\n– Accuracy: On Spring [35], SEA-RAFT achieves a new state of the art, out"
+    },
+    "primary_files": [
+      {
+        "path": "core/loss.py",
+        "content": "import numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\n\nMAX_FLOW = 400\nSUM_FREQ = 100\nVAL_FREQ = 5000\n\ndef sequence_loss(output, flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW):\n    \"\"\" Loss function defined over sequence of flow predictions \"\"\"\n    n_predictions = len(output['flow'])\n    flow_loss = 0.0\n    mag = torch.sum(flow_gt**2, dim=1).sqrt()\n    valid = (valid >= 0.5) & (mag < max_flow)\n    for i in range(n_predictions):\n        i_weight = gamma ** (n_predictions - i - 1)\n        loss_i = output['nf'][i]\n        final_mask = (~torch.isnan(loss_i.detach())) & (~torch.isinf(loss_i.detach())) & valid[:, None]\n        flow_loss += i_weight * ((final_mask * loss_i).sum() / final_mask.sum())\n\n    return flow_loss",
+        "functions": [
+          "sequence_loss"
+        ],
+        "imports": [
+          "numpy",
+          "torch.nn.functional",
+          "torch",
+          "torch.nn"
+        ],
+        "priority": "high"
+      },
+      {
+        "path": "train.py",
+        "content": "import sys\nsys.path.append('core')\n\nimport argparse\nimport numpy as np\n\nfrom config.parser import parse_args\n\nimport torch\nimport torch.optim as optim\n\nfrom raft import RAFT\nfrom datasets import fetch_dataloader\nfrom utils.utils import load_ckpt\nfrom loss import sequence_loss\nfrom ddp_utils import *\n\nos.system(\"export KMP_INIT_AT_FORK=FALSE\")\n\ndef fetch_optimizer(args, model):\n    \"\"\" Create the optimizer and learning rate scheduler \"\"\"\n    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wdecay, eps=args.epsilon)\n    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, args.lr, args.num_steps + 100,\n        pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')\n\n    return optimizer, scheduler\n\ndef train(args, rank=0, world_size=1, use_ddp=False):\n    \"\"\" Full training loop \"\"\"\n    device_id = rank\n    model = RAFT(args).to(device_id)\n    if args.restore_ckpt is not None:\n        load_ckpt(model, args.restore_ckpt)\n        print(f\"restore ckpt from {args.restore_ckpt}\")\n    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model) # there might not be any, actually\n    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank], static_graph=True)\n\n    model.train()\n    train_loader = fetch_dataloader(args, rank=rank, world_size=world_size, use_ddp=use_ddp)\n    optimizer, scheduler = fetch_optimizer(args, model)\n    total_steps = 0\n    VAL_FREQ = 10000\n    epoch = 0\n    should_keep_training = True\n    while should_keep_training:\n        train_loader.sampler.set_epoch(epoch)\n        epoch += 1\n        for i_batch, data_blob in enumerate(train_loader):\n            optimizer.zero_grad()\n            image1, image2, flow, valid = [x.cuda(non_blocking=True) for x in data_blob]\n            output = model(image1, image2, flow_gt=flow, iters=args.iters)\n            loss = sequence_loss(output, flow, valid, args.gamma)\n            loss.backward()\n            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip) \n            optimizer.step()\n            scheduler.step()\n\n            if total_steps % VAL_FREQ == VAL_FREQ - 1 and rank == 0:\n                PATH = 'checkpoints/%d_%s.pth' % (total_steps+1, args.name)\n                torch.save(model.module.state_dict(), PATH)\n            \n            if total_steps > args.num_steps:\n                should_keep_training = False\n                break\n            \n            total_steps += 1\n\n    PATH = 'checkpoints/%s.pth' % args.name\n    if rank == 0:\n        torch.save(model.module.state_dict(), PATH)\n\n    return PATH\n\ndef main(rank, world_size, args, use_ddp):\n\n    if use_ddp:\n        print(f\"Using DDP [{rank=} {world_size=}]\")\n        setup_ddp(rank, world_size)\n\n    train(args, rank=rank, world_size=world_size, use_ddp=use_ddp)\n\nif __name__ == '__main__':\n    parser = argparse.ArgumentParser()\n    parser.add_argument('--cfg', help='experiment configure file name', required=True, type=str)\n    args = parse_args(parser)\n    args.name += f\"_exp{str(np.random.randint(100))}\"\n    smp, world_size = init_ddp()\n    if world_size > 1:\n        spwn_ctx = mp.spawn(main, nprocs=world_size, args=(world_size, args, True), join=False)\n        spwn_ctx.join()\n    else:\n        main(0, 1, args, False)\n    print(\"Done!\")",
+        "functions": [
+          "fetch_optimizer",
+          "train",
+          "main"
+        ],
+        "imports": [
+          "argparse",
+          "torch",
+          "config.parser",
+          "datasets",
+          "loss",
+          "raft",
+          "ddp_utils",
+          "sys",
+          "utils.utils",
+          "torch.optim",
+          "numpy"
+        ],
+        "priority": "medium"
+      },
+      {
+        "path": "core/raft.py",
+        "content": "import numpy as np\nimport torch\nimport math\nimport torch.nn as nn\nimport torch.nn.functional as F\n\nfrom update import BasicUpdateBlock\nfrom corr import CorrBlock\nfrom utils.utils import coords_grid, InputPadder\nfrom extractor import ResNetFPN\nfrom layer import conv1x1, conv3x3\n\nfrom huggingface_hub import PyTorchModelHubMixin\n\nclass RAFT(\n    nn.Module,\n    PyTorchModelHubMixin, \n    repo_url=\"https://github.com/princeton-vl/SEA-RAFT\",\n    pipeline_tag=\"optical-flow-estimation\",\n    license=\"bsd-3-clause\",\n):\n    def __init__(self, args):\n        super().__init__()\n        self.args = args\n        self.output_dim = args.dim * 2\n        \n        self.args.corr_levels = 4\n        self.args.corr_radius = args.radius\n        self.args.corr_channel = args.corr_levels * (args.radius * 2 + 1) ** 2\n        self.cnet = ResNetFPN(args, input_dim=6, output_dim=2 * self.args.dim, norm_layer=nn.BatchNorm2d, init_weight=True)\n\n        self.init_conv = conv3x3(2 * args.dim, 2 * args.dim)\n        self.upsample_weight = nn.Sequential(\n            nn.Conv2d(args.dim, args.dim * 2, 3, padding=1),\n            nn.ReLU(inplace=True),\n            nn.Conv2d(args.dim * 2, 64 * 9, 1, padding=0)\n        )\n        self.flow_head = nn.Sequential(\n            nn.Conv2d(args.dim, 2 * args.dim, 3, padding=1),\n            nn.ReLU(inplace=True),\n            nn.Conv2d(2 * args.dim, 6, 3, padding=1)\n        )\n        if args.iters > 0:\n            self.fnet = ResNetFPN(args, input_dim=3, output_dim=self.output_dim, norm_layer=nn.BatchNorm2d, init_weight=True)\n            self.update_block = BasicUpdateBlock(args, hdim=args.dim, cdim=args.dim)\n    \n    def initialize_flow(self, img):\n        \"\"\" Flow is represented as difference between two coordinate grids flow = coords2 - coords1\"\"\"\n        N, C, H, W = img.shape\n        coords1 = coords_grid(N, H//8, W//8, device=img.device)\n        coords2 = coords_grid(N, H//8, W//8, device=img.device)\n        return coords1, coords2\n\n    def upsample_data(self, flow, info, mask):\n        \"\"\" Upsample [H/8, W/8, C] -> [H, W, C] using convex combination \"\"\"\n        N, C, H, W = info.shape\n        mask = mask.view(N, 1, 9, 8, 8, H, W)\n        mask = torch.softmax(mask, dim=2)\n\n        up_flow = F.unfold(8 * flow, [3,3], padding=1)\n        up_flow = up_flow.view(N, 2, 9, 1, 1, H, W)\n        up_info = F.unfold(info, [3, 3], padding=1)\n        up_info = up_info.view(N, C, 9, 1, 1, H, W)\n\n        up_flow = torch.sum(mask * up_flow, dim=2)\n        up_flow = up_flow.permute(0, 1, 4, 2, 5, 3)\n        up_info = torch.sum(mask * up_info, dim=2)\n        up_info = up_info.permute(0, 1, 4, 2, 5, 3)\n        \n        return up_flow.reshape(N, 2, 8*H, 8*W), up_info.reshape(N, C, 8*H, 8*W)\n\n    def forward(self, image1, image2, iters=None, flow_gt=None, test_mode=False):\n        \"\"\" Estimate optical flow between pair of frames \"\"\"\n        N, _, H, W = image1.shape\n        if iters is None:\n            iters = self.args.iters\n        if flow_gt is None:\n            flow_gt = torch.zeros(N, 2, H, W, device=image1.device)\n\n        image1 = 2 * (image1 / 255.0) - 1.0\n        image2 = 2 * (image2 / 255.0) - 1.0\n        image1 = image1.contiguous()\n        image2 = image2.contiguous()\n        flow_predictions = []\n        info_predictions = []\n\n        padder = InputPadder(image1.shape)\n        image1, image2 = padder.pad(image1, image2)\n        N, _, H, W = image1.shape\n        dilation = torch.ones(N, 1, H//8, W//8, device=image1.device)\n        cnet = self.cnet(torch.cat([image1, image2], dim=1))\n        cnet = self.init_conv(cnet)\n        net, context = torch.split(cnet, [self.args.dim, self.args.dim], dim=1)\n\n        flow_update = self.flow_head(net)\n        weight_update = .25 * self.upsample_weight(net)\n        flow_8x = flow_update[:, :2]\n        info_8x = flow_update[:, 2:]\n        flow_up, info_up = self.upsample_data(flow_8x, info_8x, weight_update)\n        flow_predictions.append(flow_up)\n        info_predictions.append(info_up)\n            \n        if self.args.iters > 0:\n            fmap1_8x = self.fnet(image1)\n            fmap2_8x = self.fnet(image2)\n            corr_fn = CorrBlock(fmap1_8x, fmap2_8x, self.args)\n\n        for itr in range(iters):\n            N, _, H, W = flow_8x.shape\n            flow_8x = flow_8x.detach()\n            coords2 = (coords_grid(N, H, W, device=image1.device) + flow_8x).detach()\n            corr = corr_fn(coords2, dilation=dilation)\n            net = self.update_block(net, context, corr, flow_8x)\n            flow_update = self.flow_head(net)\n            weight_update = .25 * self.upsample_weight(net)\n            flow_8x = flow_8x + flow_update[:, :2]\n            info_8x = flow_update[:, 2:]\n            flow_up, info_up = self.upsample_data(flow_8x, info_8x, weight_update)\n            flow_predictions.append(flow_up)\n            info_predictions.append(info_up)\n\n        for i in range(len(info_predictions)):\n            flow_predictions[i] = padder.unpad(flow_predictions[i])\n            info_predictions[i] = padder.unpad(info_predictions[i])\n\n        if test_mode == False:\n            nf_predictions = []\n            for i in range(len(info_predictions)):\n                if not self.args.use_var:\n                    var_max = var_min = 0\n                else:\n                    var_max = self.args.var_max\n                    var_min = self.args.var_min\n                    \n                raw_b = info_predictions[i][:, 2:]\n                log_b = torch.zeros_like(raw_b)\n                weight = info_predictions[i][:, :2]\n                log_b[:, 0] = torch.clamp(raw_b[:, 0], min=0, max=var_max)\n                log_b[:, 1] = torch.clamp(raw_b[:, 1], min=var_min, max=0)\n                term2 = ((flow_gt - flow_predictions[i]).abs().unsqueeze(2)) * (torch.exp(-log_b).unsqueeze(1))\n                term1 = weight - math.log(2) - log_b\n                nf_loss = torch.logsumexp(weight, dim=1, keepdim=True) - torch.logsumexp(term1.unsqueeze(1) - term2, dim=2)\n                nf_predictions.append(nf_loss)\n\n            return {'final': flow_predictions[-1], 'flow': flow_predictions, 'info': info_predictions, 'nf': nf_predictions}\n        else:\n            return {'final': flow_predictions[-1], 'flow': flow_predictions, 'info': info_predictions, 'nf': None}",
+        "functions": [
+          "__init__",
+          "initialize_flow",
+          "upsample_data",
+          "forward"
+        ],
+        "imports": [
+          "torch",
+          "corr",
+          "extractor",
+          "update",
+          "torch.nn",
+          "layer",
+          "torch.nn.functional",
+          "utils.utils",
+          "math",
+          "numpy",
+          "huggingface_hub"
+        ],
+        "priority": "medium"
+      }
+    ],
+    "schema": "见 loss_ir_schema.py 中的 LossIR 数据类定义",
+    "output_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/loss_ir.yaml",
+    "formula_output_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/loss_formula.json",
+    "code_repo": "Benchmark/SEA-RAFT-main",
+    "paper_slug": "sea_raft_benchmark"
+  },
+  "paper_analysis": {
+    "available": true,
+    "title": "SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow",
+    "abstract": ". We introduce SEA-RAFT, a more simple, efficient, and ac- curate RAFT for optical flow. Compared with RAFT, SEA-RAFT is trained with a new loss (mixture of Laplace). It directly regresses an initial flow for faster convergence in iterative refinements and intro- duces rigid-motion pre-training to improve generalization. SEA-RAFT achieves state-of-the-art accuracy on the Spring benchmark with a 3.69 endpoint-error (EPE) and a 0.36 1-pixel outlier rate (1px), representing 22.9% and 17.8% error reduction from best published results. In addi- tion, SEA-RAFT obtains the best cross-dataset generalization on KITTI and Spring. With its high efficiency, SEA-RAFT operates at least 2.3× faster than existing methods while maintaining competitive performance. The code is publicly available at https://github.com/princeton-vl/SEA- RAFT. 1 Introduction Optical flow is a fundamental task in low-level vision and aims to estimate per- pixel 2D motion between video frames. It is useful for various downstream tasks including action recognition [39, 49, 67], video in-painting [10, 22, 60], frame in- terpolation [15,27,61], 3D reconstruction and synthesis [33,69]. Although traditionally formulated as...",
+    "sections": [
+      {
+        "heading": "3\nMethod",
+        "text": "In this section, we first describe the iterative refinement in RAFT and then introduce the improvements that lead to SEA-RAFT."
+      },
+      {
+        "heading": "3.2\nMixture-of-Laplace Loss",
+        "text": "Most prior works are supervised using an endpoint-error loss on all pixels. How- ever, optical flow training data often contains ambiguous, unpredictable samples, which can dominate this loss empirically. Ambiguous Cases Ambiguous cases of optical flow can arise with heavy occlu- sion Fig. 3. While in many cases the motion of occluded pixels can be predicted, sometimes the ambiguity can be too large to predict a single outcome. We exam- ined 10 samples with the highest endpoint-error in the training and validation sets of FlyingChairs [9] and found that ambiguous cases dominate the error. Review of Probabilistic Regression Prior works for image-matching have proposed probabilistic losses to enable their model to express aleatoric or epis- temic uncertainty [4,47,51,51,53,55,64]. These approaches regress the parameters"
+      },
+      {
+        "heading": "3.4\nLarge-Scale Rigid-Flow Pre-Training",
+        "text": "Most prior works train on a small number of datasets with limited size, diversity and realism [9,34]. To improve generationalization, we pre-train SEA-RAFT on TartanAir [52], which provides optical flow annotations between a pair of (non- rectified) stereo cameras. This type of motion field is a special case of optical flow due to viewpoint change in a rigid static scene. Despite its limited motion diversity, it enables SEA-RAFT to train on data with higher realism and scene diversity, leading to better generalization. SEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow 9"
+      },
+      {
+        "heading": "1\nIntroduction",
+        "text": "Optical flow is a fundamental task in low-level vision and aims to estimate per- pixel 2D motion between video frames. It is useful for various downstream tasks including action recognition [39, 49, 67], video in-painting [10, 22, 60], frame in- terpolation [15,27,61], 3D reconstruction and synthesis [33,69]. Although traditionally formulated as an optimization problem [5,13,62], al- most all recent methods are based on deep learning [6,8,11,14,24,29,42–45,48,50, 54–57,63,66,68]. In particular, many state-of-the-art methods [14,29,43,44,50,66] have adopted architectures based on RAFT [50], which uses a recurrent network to iteratively refine a flow field. In this paper, we introduce SEA-RAFT, a new variant of RAFT that is more efficient and accurate. When compared against all existing approaches, SEA-RAFT has the best accuracy-efficiency Pareto frontier (Fig. 1): – Accuracy: On Spring..."
+      },
+      {
+        "heading": "2\nY. Wang et al.",
+        "text": "End-Point-Error 0.39 0.4 0.41 0.42 0.43 0.44 0.45 0.46"
+      },
+      {
+        "heading": "0.47\nInference Latency (ms)",
+        "text": "10 100 1000"
+      }
+    ],
+    "loss_snippets": [
+      {
+        "tag": "loss_keyword",
+        "snippet": "SEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow Yihan Wang, Lahav Lipson, and Jia Deng Department of Computer Science, Princeton University {yw7685, llipson, jiadeng}@princeton.edu Abstract. We introduce SEA-RAFT, a more simple, efficient, and ac- curate RAFT for optical flow. Compared with RAFT, SEA-RAFT is trained with a new loss (mixture of Laplace). It directly regresses an initial flow for faster convergence in iterative refinements and intro- duces rigid-motion pre-training to improve generalization. SEA-RAFT achieves state-of-the-art accuracy on the Spring benchmark with a 3.69 endpoint-error (EPE) and a 0.36 1-pixel outlier rate (1px), representing 22.9% and 17.8% erro..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "ency is measured on an RTX3090 with a batch size of 1 and input resolution 540 × 960. SEA-RAFT has an accuracy close to the best one achieved by MS-RAFT+ [19] but is 11× smaller and 24× faster. which still outperforms all other methods on Spring, can run at 21fps when processing 1080p images on an RTX3090, 3× faster than the original RAFT. We achieve this by introducing a combination of improvements over the orig- inal RAFT: – Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net- work to predict parameters of a mixture of Laplace distributions to maximize the log-likelihood of the ground truth flow. As we will demonstrate, this new loss reduces overfitting to ambiguo..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "th a batch size of 1 and input resolution 540 × 960. SEA-RAFT has an accuracy close to the best one achieved by MS-RAFT+ [19] but is 11× smaller and 24× faster. which still outperforms all other methods on Spring, can run at 21fps when processing 1080p images on an RTX3090, 3× faster than the original RAFT. We achieve this by introducing a combination of improvements over the orig- inal RAFT: – Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net- work to predict parameters of a mixture of Laplace distributions to maximize the log-likelihood of the ground truth flow. As we will demonstrate, this new loss reduces overfitting to ambiguous cases and improves generalizat..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "forms all other methods on Spring, can run at 21fps when processing 1080p images on an RTX3090, 3× faster than the original RAFT. We achieve this by introducing a combination of improvements over the orig- inal RAFT: – Mixture of Laplace Loss: Instead of the standard L1 loss, we train the net- work to predict parameters of a mixture of Laplace distributions to maximize the log-likelihood of the ground truth flow. As we will demonstrate, this new loss reduces overfitting to ambiguous cases and improves generalization. – Directly Regressed Initial Flow: Instead of initializing the flow field to zero before iterative refinement, we directly predict the initial flow by reusing the existing co..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "low as a dense regression problem and used stacked convolu- tion blocks for prediction. DCNet [58] and PWC-Net [45] introduced 4D cost- volume to explicitly model pixel correspondence. RAFT [50] further combined multi-scale 4D cost-volume with recurrent iterative refinements, achieving large improvements and spawning many follow-ups [14,19,30,31,43,44,48,66,68]. Our method is a new variant of RAFT [50] with several improvements includ- ing a new loss function, direct regression of initial flow, rigid-flow pre-training, and architectural simplifications. All of these improvements are new compared to existing RAFT variants. In particular, our direct regression of initial flow is new compare..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "ice in computer vision [2,4,25,32,47,51,53,64]. In tasks closely related to optical flow such as keypoint matching [4,47,51,64], the variance of the probability distribution reflects uncertainty of predictions and therefore is useful 4 Y. Wang et al. ResNet ResNet 4D cost volume Initial Prediction RNN × N Refined Predictions Rigid-Flow Pre-training Optical Flow Training Training Pipeline Model Architecture and Supervision Mixture of Laplace Loss Fig. 2: Compared with RAFT [50], SEA-RAFT introduces (1) rigid-flow pre-training, (2) mixture of Laplace loss, and (3) direct regression of initial flow. for many applications. For example, LoFTR [47] filters out uncertain matching pairs. Aspanfor..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "hing [4,47,51,64], the variance of the probability distribution reflects uncertainty of predictions and therefore is useful 4 Y. Wang et al. ResNet ResNet 4D cost volume Initial Prediction RNN × N Refined Predictions Rigid-Flow Pre-training Optical Flow Training Training Pipeline Model Architecture and Supervision Mixture of Laplace Loss Fig. 2: Compared with RAFT [50], SEA-RAFT introduces (1) rigid-flow pre-training, (2) mixture of Laplace loss, and (3) direct regression of initial flow. for many applications. For example, LoFTR [47] filters out uncertain matching pairs. Aspanformer [4] adjusts the look-up radius based on uncertainty. To handle the ambiguity caused by heavy occlusion, SE..."
+      },
+      {
+        "tag": "loss_keyword",
+        "snippet": "rmer [4] adjusts the look-up radius based on uncertainty. To handle the ambiguity caused by heavy occlusion, SEA-RAFT predicts a mixture of Laplace (MoL) distribution. Although MoL has been used in keypoint matching methods such as PDC-Net+ [51], our use of MoL is new in the context of RAFT-style methods. In addition, our formulation is different in that we require one mixture component to have a constant variance, making it equivalent to the L1 loss that aligns better with the optical flow evaluation metrics. This difference is crucial for achieving competitive performance in optical flow, where every pixel needs accurate correspondence, unlike keypoint matching, where a subset of reliab..."
+      }
+    ],
+    "full_text_path": "/data1/user/lz/RL_for_Agent/sandbox/loss_transfer_experiments/sea_raft_benchmark/paper_full_text.txt",
+    "notes": [
+      "Use paper sections and loss snippets together with loss_formula.json; formula alone is not enough.",
+      "Prefer direct evidence from Implementation Details / Method / Loss-related sections when deciding integration depth."
+    ]
+  },
+  "code_analysis": {
+    "available": true,
+    "focus_files": [
+      {
+        "path": "core/loss.py",
+        "priority": "high",
+        "functions": [
+          "sequence_loss"
+        ],
+        "imports": [
+          "numpy",
+          "torch.nn.functional",
+          "torch",
+          "torch.nn"
+        ],
+        "content_preview": "import numpy as np import torch import torch.nn as nn import torch.nn.functional as F MAX_FLOW = 400 SUM_FREQ = 100 VAL_FREQ = 5000 def sequence_loss(output, flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW): \"\"\" Loss function defined over sequence of flow predictions \"\"\" n_predictions = len(output['flow']) flow_loss = 0.0 mag = torch.sum(flow_gt**2, dim=1).sqrt() valid = (valid >= 0.5) & (mag < max_flow) for i in range(n_predictions): i_weight = gamma ** (n_predictions - i - 1) loss_i = output['nf'][i] final_mask = (~torch.isnan(loss_i.detach())) & (~torch.isinf(loss_i.detach())) & valid[:, None] flow_loss += i_weight * ((final_mask * loss_i).sum() / final_mask.sum()) return flow_loss"
+      },
+      {
+        "path": "train.py",
+        "priority": "medium",
+        "functions": [
+          "fetch_optimizer",
+          "train",
+          "main"
+        ],
+        "imports": [
+          "argparse",
+          "torch",
+          "config.parser",
+          "datasets",
+          "loss",
+          "raft",
+          "ddp_utils",
+          "sys",
+          "utils.utils",
+          "torch.optim",
+          "numpy"
+        ],
+        "content_preview": "import sys sys.path.append('core') import argparse import numpy as np from config.parser import parse_args import torch import torch.optim as optim from raft import RAFT from datasets import fetch_dataloader from utils.utils import load_ckpt from loss import sequence_loss from ddp_utils import * os.system(\"export KMP_INIT_AT_FORK=FALSE\") def fetch_optimizer(args, model): \"\"\" Create the optimizer and learning rate scheduler \"\"\" optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wdecay, eps=args.epsilon) scheduler = optim.lr_scheduler.OneCycleLR(optimizer, args.lr, args.num_steps + 100, pct_start=0.05, cycle_momentum=False, anneal_strategy='linear') return optimizer, scheduler def train(args, rank=0, world_size=1, use_ddp=False): \"\"\" Full training loop \"\"\" device_id = rank model = RAFT(args).to(device_id) if args.restore_ckpt is not None: load_ckpt(model, args.restore_ckpt) print(f\"restore ckpt from {args.restore_ckpt}\") model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model) # there might not be any, actually model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank], static_graph=True) model.train() train_loader = fetch_dataloader(args..."
+      },
+      {
+        "path": "core/raft.py",
+        "priority": "medium",
+        "functions": [
+          "__init__",
+          "initialize_flow",
+          "upsample_data",
+          "forward"
+        ],
+        "imports": [
+          "torch",
+          "corr",
+          "extractor",
+          "update",
+          "torch.nn",
+          "layer",
+          "torch.nn.functional",
+          "utils.utils",
+          "math",
+          "numpy",
+          "huggingface_hub"
+        ],
+        "content_preview": "import numpy as np import torch import math import torch.nn as nn import torch.nn.functional as F from update import BasicUpdateBlock from corr import CorrBlock from utils.utils import coords_grid, InputPadder from extractor import ResNetFPN from layer import conv1x1, conv3x3 from huggingface_hub import PyTorchModelHubMixin class RAFT( nn.Module, PyTorchModelHubMixin, repo_url=\"https://github.com/princeton-vl/SEA-RAFT\", pipeline_tag=\"optical-flow-estimation\", license=\"bsd-3-clause\", ): def __init__(self, args): super().__init__() self.args = args self.output_dim = args.dim * 2 self.args.corr_levels = 4 self.args.corr_radius = args.radius self.args.corr_channel = args.corr_levels * (args.radius * 2 + 1) ** 2 self.cnet = ResNetFPN(args, input_dim=6, output_dim=2 * self.args.dim, norm_layer=nn.BatchNorm2d, init_weight=True) self.init_conv = conv3x3(2 * args.dim, 2 * args.dim) self.upsample_weight = nn.Sequential( nn.Conv2d(args.dim, args.dim * 2, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(args.dim * 2, 64 * 9, 1, padding=0) ) self.flow_head = nn.Sequential( nn.Conv2d(args.dim, 2 * args.dim, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(2 * args.dim, 6, 3, padding=1) ) if arg..."
+      }
+    ],
+    "notes": [
+      "Agent should inspect where the paper loss is computed: standalone loss file, training loop, or model.forward.",
+      "If the paper computes auxiliary tensors inside model.forward, do not force a loss-only migration."
+    ]
+  },
+  "integration_assessment": {
+    "primary_source_of_truth": "paper + code evidence + loss_formula",
+    "loss_ir_available": true,
+    "loss_ir_role": "optional_reference",
+    "loss_only_pipeline_viable": false,
+    "recommended_path": "extend_model_outputs",
+    "change_level": 4,
+    "requires_model_changes": true,
+    "notes": [
+      "Use interface_analysis to decide whether the SR model needs loss_inputs / adapter heads / output extension."
+    ],
+    "change_level_label": "model_output_extension",
+    "extra_required_variables": [
+      "log_b",
+      "weight"
+    ],
+    "issues": [
+      "formula requires additional model-provided loss inputs; auto experiment must enable sandbox_adapter heads for: log_b, weight",
+      "formula likely needs deeper integration than loss-only migration; recommended path: extend_model_outputs"
+    ],
+    "loss_recipe": "masked_mixture_laplace_nll",
+    "recipe_status": "ready",
+    "compatibility_status": "fully_compatible"
+  },
+  "loss_ir": {
+    "_raw_code_snippets": [
+      {
+        "content": "import numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\n\n# exclude extremly large displacements\nMAX_FLOW = 400\nSUM_FREQ = 100\nVAL_FREQ = 5000\n\ndef sequence_loss(output, flow_gt, valid, gamma=0.8, max_flow=MAX_FLOW):\n    \"\"\" Loss function defined over sequence of flow predictions \"\"\"\n    n_predictions = len(output['flow'])\n    flow_loss = 0.0\n    # exlude invalid pixels and extremely large diplacements\n    mag = torch.sum(flow_gt**2, dim=1).sqrt()\n    valid = (valid >= 0.5) & (mag < max_flow)\n    for i in range(n_predictions):\n        i_weight = gamma ** (n_predictions - i - 1)\n        loss_i = output['nf'][i]\n        final_mask = (~torch.isnan(loss_i.detach())) & (~torch.isinf(loss_i.detach())) & valid[:, None]\n        flow_loss += i_weight * ((final_mask * loss_i).sum() / final_mask.sum())\n\n    return flow_loss",
+        "file": "core/loss.py"
+      }
+    ],
+    "combination": {
+      "method": "weighted_sum"
+    },
+    "components": [],
+    "incompatibility_flags": {},
+    "interface": {
+      "input_tensors": []
+    },
+    "metadata": {
+      "code_repo": "/data1/user/lz/RL_for_Agent/Benchmark/SEA-RAFT-main",
+      "loss_files": [
+        "core/loss.py"
+      ],
+      "paper_title": "SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow"
+    },
+    "multi_scale": {
+      "enabled": false
+    }
+  },
+  "legacy_loss_ir_status": {
+    "auto_extraction_enabled": false,
+    "status": "loaded",
+    "notes": [
+      "Legacy LLM-driven extract_loss_ir is no longer part of the main agentic path.",
+      "If needed, provide --loss_ir_yaml explicitly as a manual or offline artifact."
+    ]
+  },
+  "compatibility": {
+    "status": "fully_compatible",
+    "warnings": []
+  },
+  "formula_spec": {
+    "latex": [
+      "gression performs poorly is that it\ndeviates from the standard endpoint-error metric, which only cares about the\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{",
+      "AFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d",
+      "ce frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhe",
+      "ion on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direc",
+      "] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y directi",
+      "ifference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free par",
+      ". Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by th",
+      "e to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\nMixLap( x; \\al pha , \\bet a_1,\n\\beta \n_ 2, \\mu ) &= \\alp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_1}}}}{2e^{\\beta_1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta_2}}}}{2e^{\\beta_2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n\\mathcal\n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta_2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-"
+    ],
+    "raw_formula_candidates": [
+      "gression performs poorly is that it\ndeviates from the standard endpoint-error metric, which only cares about the\n\nSEA-RAFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{",
+      "AFT: Simple, Efficient, Accurate RAFT for Optical Flow\n7\nSource frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d",
+      "ce frame\nFlow prediction\nError\nFig. 4: Visualization on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhe",
+      "ion on Spring [35] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direc",
+      "] test set.\nL1 difference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y directi",
+      "ifference, but not the uncertainty estimation. Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free par",
+      ". Thus, we propose to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by th",
+      "e to use a\nmixture of two Laplace distributions: one for ordinary cases, and the other for\nambiguous cases, with mixing coefficient α ∈[0, 1]:\n  MixLap( x; \\al pha  ,  \\ b et a _1,\n \\b\neta \n_ 2,  \\m u  )  &= \\\nalp\nha \\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _1}}}}{2e^{\\beta _1}} + (1-\\alpha )\\cdot \\frac {e^{-\\frac {|x-\\mu |}{e^{\\beta _2}}}}{2e^{\\beta _2}}\nIntuitively, at each pixel, we want the first component of the mixture to be\naligned with the endpoint-error metric, and the second component to account\nfor ambiguous cases. To explicitly enforce this, we fix β1 = 0, such that the\nnetwork is encouraged to optimize for the L1 loss when possible. This leads to\nthe following Mixture-of-Laplace (MoL) loss:\n  \\m a t\nh\ncal\n \n{\nL\n}\n_\n{MoL} &= \\scalemath {0.85}{-\\frac {1}{2HW}\\sum _{u}\\sum _{v}\\sum _{d\\in \\{x,y\\}}{\\log {[MixLap(\\mu _{gt}(u,v)_d;\\alpha (u,v), 0, \\beta _2(u,v), \\mu (u,v)_d)]}}\n(2)\nwhere d indexes the axe of the flow vector (the x direction or y direction).\nThe free parameters α, β2, µ of LMoL are predicted by the network. Intu-"
+    ],
+    "latex_extraction_status": "heuristic_pdf_text_windows",
+    "params": {
+      "MAX_FLOW": 400,
+      "gamma": 0.85,
+      "use_var": true,
+      "var_min": 0,
+      "var_max": 10,
+      "epsilon": 1e-08
+    },
+    "symbol_map": {
+      "PRED_SYMBOL_TODO": "pred",
+      "TARGET_SYMBOL_TODO": "target",
+      "\\gamma": "gamma",
+      "\\epsilon": "epsilon",
+      "WEIGHT_SYMBOL_TODO": "weight",
+      "LOG_B_SYMBOL_TODO": "log_b"
+    },
+    "adapter_heads": {
+      "weight": {
+        "activation": "tanh",
+        "output_scale": 4.0,
+        "bias_init": 0.0,
+        "detach_input": true,
+        "zero_init": true
+      },
+      "log_b": {
+        "activation": "tanh",
+        "output_scale": 4.0,
+        "bias_init": 0.0,
+        "detach_input": true,
+        "zero_init": true
+      }
+    },
+    "notes": "AUTO-DRAFT: generated heuristically from paper snippets + code/config evidence. The `latex` field is currently a cleaned candidate reconstructed from PDF text windows, not guaranteed to be exact author LaTeX. Check `raw_formula_candidates` when formula formatting matters. You must manually review symbol names, equation formatting, and whether all predicted variables required by the paper are represented. adapter_heads is only a sandbox-side draft and may need manual correction for channel counts or activations.",
+    "review_required": true,
+    "sources": {
+      "paper_pdf_path": "Benchmark/SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow.pdf",
+      "code_repo_path": "Benchmark/SEA-RAFT-main",
+      "paper_title": "SEA-RAFT Simple Efficient Accurate RAFT for Optical Flow",
+      "primary_files": [
+        {
+          "path": "core/loss.py",
+          "functions": "sequence_loss",
+          "priority": "high"
+        },
+        {
+          "path": "train.py",
+          "functions": "fetch_optimizer, train, main",
+          "priority": "medium"
+        },
+        {
+          "path": "core/raft.py",
+          "functions": "__init__, initialize_flow, upsample_data, forward",
+          "priority": "medium"
+        }
+      ],
+      "detected_aux_variables": [
+        "weight",
+        "log_b"
+      ],
+      "structure_hints": {
+        "loss_defined_inside_model_forward": true,
+        "model_returns_structured_outputs": true,
+        "uses_feature_or_hidden_state_terms": true,
+        "uses_pretrained_or_adversarial_terms": false,
+        "uses_multi_stage_or_multi_scale_terms": true,
+        "uses_distributional_aux_heads": true,
+        "explicit_loss_inputs_container": false,
+        "detected_aux_variables": [
+          "weight",
+          "log_b"
+        ],
+        "evidence_paths": {
+          "forward_loss": [
+            "core/raft.py"
+          ],
+          "structured_outputs": [
+            "train.py",
+            "core/raft.py"
+          ],
+          "feature_terms": [
+            "core/raft.py"
+          ],
+          "external_terms": [],
+          "multi_stage_terms": [],
+          "explicit_loss_inputs": []
+        }
+      }
+    },
+    "interface_analysis": {
+      "status": "requires_model_changes",
+      "base_interface_variables": [
+        "pred",
+        "target",
+        "mask"
+      ],
+      "param_variables": [
+        "MAX_FLOW",
+        "epsilon",
+        "gamma",
+        "use_var",
+        "var_max",
+        "var_min"
+      ],
+      "mapped_variables": [
+        "epsilon",
+        "gamma",
+        "log_b",
+        "pred",
+        "target",
+        "weight"
+      ],
+      "runtime_can_forward_model_loss_inputs": true,
+      "requires_model_output_extension": true,
+      "requires_extra_prediction_heads": true,
+      "loss_only_pipeline_compatible": false,
+      "auto_experiment_supported": true,
+      "extra_required_variables": [
+        "log_b",
+        "weight"
+      ],
+      "extra_required_symbols": [
+        "LOG_B_SYMBOL_TODO",
+        "WEIGHT_SYMBOL_TODO"
+      ],
+      "head_friendly_variables": [
+        "log_b",
+        "weight"
+      ],
+      "unclear_extra_variables": [],
+      "feature_like_variables": [],
+      "declared_adapter_heads": [
+        "log_b",
+        "weight"
+      ],
+      "missing_adapter_heads": [],
+      "adapter_config_source": "declared",
+      "structure_hints": {
+        "loss_defined_inside_model_forward": true,
+        "model_returns_structured_outputs": true,
+        "uses_feature_or_hidden_state_terms": true,
+        "uses_pretrained_or_adversarial_terms": false,
+        "uses_multi_stage_or_multi_scale_terms": true,
+        "uses_distributional_aux_heads": true,
+        "explicit_loss_inputs_container": false,
+        "detected_aux_variables": [
+          "weight",
+          "log_b"
+        ],
+        "evidence_paths": {
+          "forward_loss": [
+            "core/raft.py"
+          ],
+          "structured_outputs": [
+            "train.py",
+            "core/raft.py"
+          ],
+          "feature_terms": [
+            "core/raft.py"
+          ],
+          "external_terms": [],
+          "multi_stage_terms": [],
+          "explicit_loss_inputs": []
+        }
+      },
+      "simple_formula": false,
+      "change_level": 4,
+      "change_level_label": "model_output_extension",
+      "change_level_reasons": [
+        "Formula needs extra loss inputs that look like lightweight prediction heads: log_b, weight",
+        "Paper/code hints indicate multi-stage or multi-scale supervision",
+        "Paper code appears to compute or couple loss logic inside model.forward"
+      ],
+      "recommended_integration_path": "extend_model_outputs",
+      "minimal_change_possible": false,
+      "requires_model_changes": true,
+      "can_use_original_loss_factory_directly": false,
+      "issues": [
+        "formula requires additional model-provided loss inputs; auto experiment must enable sandbox_adapter heads for: log_b, weight",
+        "formula likely needs deeper integration than loss-only migration; recommended path: extend_model_outputs"
+      ],
+      "notes": "Change levels: L1=params only, L2=spec-driven loss recipe, L3=loss_inputs adapter/wrapper, L4=model output extension, L5=model surgery. The sandbox runtime can forward extra kwargs to sandbox_loss when using a sandbox model adapter that exposes extra loss inputs, but change_level>=4 means the original SR code likely needs deeper integration than a loss-only patch."
+    }
+  },
+  "formula_interface": {
+    "status": "requires_model_changes",
+    "base_interface_variables": [
+      "pred",
+      "target",
+      "mask"
+    ],
+    "param_variables": [
+      "MAX_FLOW",
+      "epsilon",
+      "gamma",
+      "use_var",
+      "var_max",
+      "var_min"
+    ],
+    "mapped_variables": [
+      "epsilon",
+      "gamma",
+      "log_b",
+      "pred",
+      "target",
+      "weight"
+    ],
+    "runtime_can_forward_model_loss_inputs": true,
+    "requires_model_output_extension": true,
+    "requires_extra_prediction_heads": true,
+    "loss_only_pipeline_compatible": false,
+    "auto_experiment_supported": true,
+    "extra_required_variables": [
+      "log_b",
+      "weight"
+    ],
+    "extra_required_symbols": [
+      "LOG_B_SYMBOL_TODO",
+      "WEIGHT_SYMBOL_TODO"
+    ],
+    "head_friendly_variables": [
+      "log_b",
+      "weight"
+    ],
+    "unclear_extra_variables": [],
+    "feature_like_variables": [],
+    "declared_adapter_heads": [
+      "log_b",
+      "weight"
+    ],
+    "missing_adapter_heads": [],
+    "adapter_config_source": "declared",
+    "structure_hints": {
+      "loss_defined_inside_model_forward": true,
+      "model_returns_structured_outputs": true,
+      "uses_feature_or_hidden_state_terms": true,
+      "uses_pretrained_or_adversarial_terms": false,
+      "uses_multi_stage_or_multi_scale_terms": true,
+      "uses_distributional_aux_heads": true,
+      "explicit_loss_inputs_container": false,
+      "detected_aux_variables": [
+        "weight",
+        "log_b"
+      ],
+      "evidence_paths": {
+        "forward_loss": [
+          "core/raft.py"
+        ],
+        "structured_outputs": [
+          "train.py",
+          "core/raft.py"
+        ],
+        "feature_terms": [
+          "core/raft.py"
+        ],
+        "external_terms": [],
+        "multi_stage_terms": [],
+        "explicit_loss_inputs": []
+      }
+    },
+    "simple_formula": false,
+    "change_level": 4,
+    "change_level_label": "model_output_extension",
+    "change_level_reasons": [
+      "Formula needs extra loss inputs that look like lightweight prediction heads: log_b, weight",
+      "Paper/code hints indicate multi-stage or multi-scale supervision",
+      "Paper code appears to compute or couple loss logic inside model.forward"
+    ],
+    "recommended_integration_path": "extend_model_outputs",
+    "minimal_change_possible": false,
+    "requires_model_changes": true,
+    "can_use_original_loss_factory_directly": false,
+    "issues": [
+      "formula requires additional model-provided loss inputs; auto experiment must enable sandbox_adapter heads for: log_b, weight",
+      "formula likely needs deeper integration than loss-only migration; recommended path: extend_model_outputs"
+    ],
+    "notes": "Change levels: L1=params only, L2=spec-driven loss recipe, L3=loss_inputs adapter/wrapper, L4=model output extension, L5=model surgery. The sandbox runtime can forward extra kwargs to sandbox_loss when using a sandbox model adapter that exposes extra loss inputs, but change_level>=4 means the original SR code likely needs deeper integration than a loss-only patch."
+  },
+  "loss_spec": {
+    "status": "review_required",
+    "recipe_status": "ready",
+    "recipe_reason": "Recognized mixture Laplace negative log-likelihood pattern",
+    "loss": {
+      "mode": "spec_driven",
+      "recipe": "masked_mixture_laplace_nll",
+      "params": {
+        "MAX_FLOW": 400,
+        "gamma": 0.85,
+        "use_var": true,
+        "var_min": 0,
+        "var_max": 10,
+        "epsilon": 1e-08
+      },
+      "bindings": {
+        "pred": "pred",
+        "target": "target",
+        "log_b": "loss_inputs.log_b",
+        "weight": "loss_inputs.weight"
+      }
+    },
+    "change_level": 4,
+    "change_level_label": "model_output_extension",
+    "change_level_reasons": [
+      "Formula needs extra loss inputs that look like lightweight prediction heads: log_b, weight",
+      "Paper/code hints indicate multi-stage or multi-scale supervision",
+      "Paper code appears to compute or couple loss logic inside model.forward"
+    ],
+    "recommended_path": "extend_model_outputs",
+    "recommended_integration_path": "extend_model_outputs",
+    "requires_model_changes": true,
+    "minimal_change_possible": false,
+    "can_use_original_loss_factory_directly": false,
+    "issues": [
+      "formula requires additional model-provided loss inputs; auto experiment must enable sandbox_adapter heads for: log_b, weight",
+      "formula likely needs deeper integration than loss-only migration; recommended path: extend_model_outputs"
+    ],
+    "review_required": true
+  },
+  "formula_draft_status": {
+    "status": "skipped"
+  },
+  "analysis_plan_schema": {
+    "summary": "Short explanation of the integration decision using paper + code + formula evidence.",
+    "stop_on_first_pass": false,
+    "integration_decision": {
+      "path": "loss_only | adapter_wrapper | extend_model_outputs | model_surgery",
+      "rationale": "Why this path is required for the paper.",
+      "evidence_refs": [
+        "paper_analysis.loss_snippets[0]",
+        "code_analysis.focus_files[0]"
+      ]
+    },
+    "attempts": [
+      {
+        "name": "Attempt name",
+        "kind": "agent_code | formula_variant",
+        "variant": "faithful | stabilized",
+        "code": "optional inline candidate_loss.py content for agent_code",
+        "code_path": "optional path to candidate_loss.py",
+        "objective": "implementation goal for agent-generated candidate code",
+        "files_to_edit": [
+          "optional file paths the Agent expects to edit"
+        ],
+        "evidence_refs": [
+          "task_context references supporting this attempt"
+        ],
+        "run_training": true,
+        "notes": "Why this attempt should work"
+      }
+    ]
+  },
+  "agent_guidance": [
+    "Do not analyze from formula only. Combine paper_analysis, code_analysis, formula_spec, and interface constraints.",
+    "Use loss_formula.json as the formula source of truth for latex, params, and symbol_map, but validate it against paper/code evidence.",
+    "Keep sandbox_loss(pred, target, mask=None, **kwargs) as the stable integration surface when the paper allows loss-only migration.",
+    "If integration_assessment indicates adapter_wrapper or extend_model_outputs, modify the adapter/model path intentionally instead of hacking the loss.",
+    "Treat loss_ir as optional supporting material, not the main brain of the system.",
+    "If you output an agent_code attempt, include executable code, a concrete code_path, or a precise objective that a later Agent pass can turn into candidate_loss.py.",
+    "Record every attempt as analysis_plan.json + candidate_loss.py + result.json for later RL training."
+  ]
+}
