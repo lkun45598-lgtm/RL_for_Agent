@@ -26,7 +26,11 @@
 import dotenv from 'dotenv'
 import fs from 'fs'
 import path from 'path'
-dotenv.config({ override: true })
+const dotenvDisabled = process.env.KODE_DISABLE_DOTENV === '1'
+const dotenvOverride = process.env.KODE_DOTENV_OVERRIDE !== '0'
+if (!dotenvDisabled) {
+  dotenv.config({ override: dotenvOverride })
+}
 import {
   JSONStore,
   AgentTemplateRegistry,
@@ -41,20 +45,102 @@ import {
 
 import tools from './tools'
 import { THINKING_BUDGET_TOKENS } from './utils/constants'
+import { createOpenAIProvider } from './utils/openai-provider-patch'
 // ========================================
 // 环境变量配置
 // ========================================
 
+type ProviderKind = 'anthropic' | 'openai'
+type OpenAIApiMode = 'chat' | 'responses'
+
+function getEnvValue(...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key]?.trim()
+    if (value) {
+      return value
+    }
+  }
+  return undefined
+}
+
+function resolveProvider(): ProviderKind {
+  const explicitProvider = getEnvValue('LLM_PROVIDER', 'MODEL_PROVIDER')?.toLowerCase()
+  if (explicitProvider === 'openai' || explicitProvider === 'anthropic') {
+    return explicitProvider
+  }
+
+  if (getEnvValue('LLM_API_KEY', 'OPENAI_API_KEY')) {
+    return 'openai'
+  }
+
+  return 'anthropic'
+}
+
+function isResponsesPreferredModel(model: string | undefined): boolean {
+  if (!model) {
+    return false
+  }
+
+  const normalized = model.toLowerCase()
+  return (
+    normalized.startsWith('gpt-5') ||
+    normalized.startsWith('o1') ||
+    normalized.startsWith('o3') ||
+    normalized.startsWith('o4')
+  )
+}
+
+function resolveOpenAIApiMode(): OpenAIApiMode {
+  const apiMode = getEnvValue('LLM_API_MODE', 'OPENAI_API_MODE')?.toLowerCase()
+  if (apiMode === 'responses') {
+    return 'responses'
+  }
+  if (apiMode === 'chat') {
+    return 'chat'
+  }
+
+  const hintedModel = getEnvValue('LLM_MODEL_ID', 'LLM_MODEL', 'OPENAI_MODEL_ID', 'OPENAI_MODEL')
+  return isResponsesPreferredModel(hintedModel) ? 'responses' : 'chat'
+}
+
+const provider = resolveProvider()
+const openaiApiMode = resolveOpenAIApiMode()
+const modelId = provider === 'openai'
+  ? (getEnvValue('LLM_MODEL_ID', 'LLM_MODEL', 'OPENAI_MODEL_ID', 'OPENAI_MODEL') ?? 'gpt-4o')
+  : (getEnvValue('LLM_MODEL_ID', 'LLM_MODEL', 'ANTHROPIC_MODEL_ID') ?? 'claude-sonnet-4-5-20250929')
+const apiKey = provider === 'openai'
+  ? getEnvValue('LLM_API_KEY', 'OPENAI_API_KEY')
+  : getEnvValue('LLM_API_KEY', 'ANTHROPIC_API_KEY')
+const baseUrl = provider === 'openai'
+  ? (getEnvValue('LLM_BASE_URL', 'OPENAI_BASE_URL') ?? 'https://api.openai.com/v1')
+  : (getEnvValue('LLM_BASE_URL', 'ANTHROPIC_BASE_URL') ?? 'https://yunwu.ai')
+const apiKeyEnvHints = provider === 'openai'
+  ? ['LLM_API_KEY', 'OPENAI_API_KEY']
+  : ['LLM_API_KEY', 'ANTHROPIC_API_KEY']
+const modelEnvHints = provider === 'openai'
+  ? ['LLM_MODEL_ID', 'LLM_MODEL', 'OPENAI_MODEL_ID', 'OPENAI_MODEL']
+  : ['LLM_MODEL_ID', 'LLM_MODEL', 'ANTHROPIC_MODEL_ID']
+const baseUrlEnvHints = provider === 'openai'
+  ? ['LLM_BASE_URL', 'OPENAI_BASE_URL']
+  : ['LLM_BASE_URL', 'ANTHROPIC_BASE_URL']
+
 export const config = {
+  provider,
   port: Number(process.env.KODE_API_PORT ?? '8787'),
   apiSecret: process.env.KODE_API_SECRET,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  anthropicModelId: process.env.ANTHROPIC_MODEL_ID ?? 'claude-sonnet-4-5-20250929',
-  anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL ?? 'https://yunwu.ai',
+  apiKey,
+  modelId,
+  baseUrl,
+  openaiApiMode,
   kodeStorePath: process.env.KODE_STORE_PATH ?? './.kode',
   skillsDir: process.env.SKILLS_DIR ?? './.skills',
 } as const
-console.log('[config] 最终使用模型:', config.anthropicModelId)
+console.log('[config] Provider:', config.provider)
+console.log('[config] 最终使用模型:', config.modelId)
+if (config.provider === 'openai') {
+  console.log('[config] OpenAI API mode:', config.openaiApiMode)
+}
+console.log('[config] dotenv override:', dotenvDisabled ? 'disabled' : String(dotenvOverride))
 
 
 function loadSkillsWhitelist(skillsDir: string, defaults: string[]): string[] {
@@ -87,23 +173,29 @@ console.log('[config] Skills 白名单:', skillsWhiteList)
 export function validateConfig(): void {
   const errors: string[] = []
   const warnings: string[] = []
+  const apiKeyEnvName = apiKeyEnvHints.join(' / ')
+  const modelEnvName = modelEnvHints.join(' / ')
+  const baseUrlEnvName = baseUrlEnvHints.join(' / ')
 
   // 必需配置
-  if (!config.anthropicApiKey) {
-    errors.push('未设置 ANTHROPIC_API_KEY 环境变量')
+  if (!config.apiKey) {
+    errors.push(`未设置 ${apiKeyEnvName} 环境变量`)
   }
 
-  if (!config.anthropicModelId) {
-    errors.push('未设置 ANTHROPIC_MODEL_ID 环境变量')
+  if (!config.modelId) {
+    errors.push(`未设置 ${modelEnvName} 环境变量`)
   }
 
-  if (!config.anthropicBaseUrl) {
-    errors.push('未设置 ANTHROPIC_BASE_URL 环境变量')
+  if (!config.baseUrl) {
+    errors.push(`未设置 ${baseUrlEnvName} 环境变量`)
   }
 
   // 警告配置
   if (!config.apiSecret) {
     warnings.push('未设置 KODE_API_SECRET，服务将拒绝所有未认证请求')
+  }
+  if (config.provider === 'openai' && config.openaiApiMode === 'responses') {
+    warnings.push('已启用 OpenAI responses 模式；请确认上游网关兼容 /v1/responses 接口')
   }
 
   // 输出警告
@@ -235,19 +327,30 @@ function createSandboxFactory() {
 }
 
 function createModelFactory() {
-  return () => new AnthropicProvider(
-    config.anthropicApiKey,
-    config.anthropicModelId,
-    config.anthropicBaseUrl,
-    undefined,  // 直接连接baseURL，不使用代理
-    { 
-      reasoningTransport: 'provider', 
-      thinking: {
-        enabled: true,
-        budgetTokens: THINKING_BUDGET_TOKENS,  // 设置合理的 token 预算，避免过度 thinking
-      }
-    },
-  )
+  return () => {
+    if (config.provider === 'openai') {
+      return createOpenAIProvider(
+        config.apiKey,
+        config.modelId,
+        config.baseUrl,
+        config.openaiApiMode,
+      )
+    }
+
+    return new AnthropicProvider(
+      config.apiKey,
+      config.modelId,
+      config.baseUrl,
+      undefined,  // 直接连接baseURL，不使用代理
+      {
+        reasoningTransport: 'provider',
+        thinking: {
+          enabled: true,
+          budgetTokens: THINKING_BUDGET_TOKENS,  // 设置合理的 token 预算，避免过度 thinking
+        }
+      },
+    )
+  }
 }
 
 // ========================================

@@ -156,6 +156,18 @@ def _validate_adapter_heads(adapter_heads: Any) -> Tuple[bool, List[str], List[s
         if "bias_init" in cfg and cfg.get("bias_init") is not None and not isinstance(cfg.get("bias_init"), (int, float)):
             errors.append(f'adapter_heads["{variable_name}"].bias_init must be numeric or null')
 
+        if "output_scale" in cfg and cfg.get("output_scale") is not None and not isinstance(cfg.get("output_scale"), (int, float)):
+            errors.append(f'adapter_heads["{variable_name}"].output_scale must be numeric or null')
+
+        if "output_shift" in cfg and cfg.get("output_shift") is not None and not isinstance(cfg.get("output_shift"), (int, float)):
+            errors.append(f'adapter_heads["{variable_name}"].output_shift must be numeric or null')
+
+        if "detach_input" in cfg and not isinstance(cfg.get("detach_input"), bool):
+            errors.append(f'adapter_heads["{variable_name}"].detach_input must be boolean')
+
+        if "zero_init" in cfg and not isinstance(cfg.get("zero_init"), bool):
+            errors.append(f'adapter_heads["{variable_name}"].zero_init must be boolean')
+
     return len(errors) == 0, errors, warnings
 
 
@@ -202,6 +214,17 @@ def validate_formula_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
         errors.append("notes must be a string if provided")
     if "interface_analysis" in spec and not isinstance(spec["interface_analysis"], dict):
         errors.append("interface_analysis must be an object if provided")
+    if "raw_formula_candidates" in spec:
+        raw_formula_candidates = spec["raw_formula_candidates"]
+        if not isinstance(raw_formula_candidates, list):
+            errors.append("raw_formula_candidates must be a list of strings if provided")
+        else:
+            for i, item in enumerate(raw_formula_candidates):
+                if not isinstance(item, str) or not item.strip():
+                    errors.append(f"raw_formula_candidates[{i}] must be a non-empty string")
+    if "latex_extraction_status" in spec and spec["latex_extraction_status"] is not None:
+        if not isinstance(spec["latex_extraction_status"], str):
+            errors.append("latex_extraction_status must be a string if provided")
     if "adapter_hidden_channels" in spec:
         hidden_channels = spec["adapter_hidden_channels"]
         if not isinstance(hidden_channels, int) or hidden_channels <= 0:

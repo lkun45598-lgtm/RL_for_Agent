@@ -84,19 +84,57 @@ def requires_sandbox_adapter(formula_spec: Optional[Dict[str, Any]]) -> bool:
     if not formula_spec:
         return False
     analysis = analyze_formula_interface(formula_spec)
+    if analysis.get("requires_model_output_extension", False):
+        return False
     return bool(analysis.get("extra_required_variables"))
+
+
+def requires_model_output_extension(formula_spec: Optional[Dict[str, Any]]) -> bool:
+    if not formula_spec:
+        return False
+    analysis = analyze_formula_interface(formula_spec)
+    return bool(analysis.get("requires_model_output_extension", False))
 
 
 def infer_adapter_head_template(variable_name: str) -> Dict[str, Any]:
     lowered = variable_name.strip().lower()
 
     if lowered.startswith("log_"):
-        return {"activation": "none", "bias_init": -1.0}
+        return {
+            "activation": "tanh",
+            "output_scale": 4.0,
+            "bias_init": 0.0,
+            "detach_input": True,
+            "zero_init": True,
+        }
+    if lowered == "weight" or lowered.endswith("_weight") or lowered.endswith("_logits"):
+        return {
+            "activation": "tanh",
+            "output_scale": 4.0,
+            "bias_init": 0.0,
+            "detach_input": True,
+            "zero_init": True,
+        }
     if lowered in {"sigma", "variance", "var", "uncertainty"} or lowered.endswith("_sigma") or lowered.endswith("_var"):
-        return {"activation": "softplus", "bias_init": 0.0}
+        return {
+            "activation": "softplus",
+            "bias_init": 0.0,
+            "detach_input": True,
+            "zero_init": True,
+        }
     if lowered == "confidence" or lowered.endswith("_confidence"):
-        return {"activation": "sigmoid", "bias_init": 0.0}
-    return {"activation": "none", "bias_init": 0.0}
+        return {
+            "activation": "sigmoid",
+            "bias_init": 0.0,
+            "detach_input": True,
+            "zero_init": True,
+        }
+    return {
+        "activation": "none",
+        "bias_init": 0.0,
+        "detach_input": True,
+        "zero_init": True,
+    }
 
 
 def draft_adapter_heads(extra_required_variables: list[str]) -> Dict[str, Dict[str, Any]]:
@@ -125,6 +163,14 @@ def _normalize_head_config(
         merged["bias_init"] = float(merged["bias_init"])
     if "hidden_channels" in merged and merged["hidden_channels"] is not None:
         merged["hidden_channels"] = int(merged["hidden_channels"])
+    if "output_scale" in merged and merged["output_scale"] is not None:
+        merged["output_scale"] = float(merged["output_scale"])
+    if "output_shift" in merged and merged["output_shift"] is not None:
+        merged["output_shift"] = float(merged["output_shift"])
+    if "detach_input" in merged:
+        merged["detach_input"] = bool(merged["detach_input"])
+    if "zero_init" in merged:
+        merged["zero_init"] = bool(merged["zero_init"])
 
     return merged
 
@@ -227,6 +273,7 @@ def build_config_with_adapter(
     base_config: Dict[str, Any],
     formula_spec: Optional[Dict[str, Any]],
     dataset_root: Optional[str] = None,
+    prefer_model_output_extension: bool = False,
 ) -> Dict[str, Any]:
     config = dict(base_config)
     model_cfg = config.get("model", {})
@@ -241,11 +288,20 @@ def build_config_with_adapter(
     else:
         data_cfg = dict(data_cfg)
 
+    train_cfg = config.get("train", {})
+    if not isinstance(train_cfg, dict):
+        train_cfg = {}
+    else:
+        train_cfg = dict(train_cfg)
+
     dataset_meta: Dict[str, Any] = {}
     if dataset_root:
         dataset_meta = _infer_dataset_metadata(dataset_root)
 
     pred_channels = int(model_cfg.get("out_channels", model_cfg.get("out_dim", 1)))
+    model_requires_output_extension = (
+        requires_model_output_extension(formula_spec) and prefer_model_output_extension
+    )
     if dataset_meta.get("num_channels"):
         channel_count = int(dataset_meta["num_channels"])
         pred_channels = channel_count
@@ -255,19 +311,28 @@ def build_config_with_adapter(
             model_cfg["out_channels"] = channel_count
         if "out_dim" in model_cfg:
             model_cfg["out_dim"] = channel_count
+    if model_requires_output_extension:
+        model_cfg["output_aux_loss_inputs"] = True
     adapter_cfg = build_sandbox_adapter_config(formula_spec, pred_channels=pred_channels)
-    if adapter_cfg:
+    if adapter_cfg and not model_requires_output_extension:
         config["sandbox_adapter"] = adapter_cfg
+    else:
+        config.pop("sandbox_adapter", None)
     if dataset_root:
         data_cfg["dataset_root"] = dataset_root
     if dataset_meta:
         data_cfg["dyn_vars"] = dataset_meta["dyn_vars"]
         data_cfg["shape"] = dataset_meta["shape"]
         data_cfg["sample_factor"] = dataset_meta["sample_factor"]
+    # Default to full precision for transferred-loss experiments because
+    # auxiliary adapter heads can overflow under AMP before the loss itself diverges.
+    train_cfg["use_amp"] = False
     if data_cfg:
         config["data"] = data_cfg
     if model_cfg:
         config["model"] = model_cfg
+    if train_cfg:
+        config["train"] = train_cfg
     return config
 
 
@@ -276,6 +341,7 @@ def write_config_with_adapter(
     formula_spec: Optional[Dict[str, Any]],
     output_path: str,
     dataset_root: Optional[str] = None,
+    prefer_model_output_extension: bool = False,
 ) -> Dict[str, Any]:
     config_path = Path(base_config_path)
     base_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -286,6 +352,7 @@ def write_config_with_adapter(
         base_config,
         formula_spec=formula_spec,
         dataset_root=dataset_root,
+        prefer_model_output_extension=prefer_model_output_extension,
     )
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -51,4 +51,4 @@ train:
   random_seed: 42
   saving_best: true
   saving_ckpt: false
-  use_amp: true
+  use_amp: false

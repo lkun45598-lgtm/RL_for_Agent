@@ -326,7 +326,7 @@ class _TrialResultBase(TypedDict):
 
 
 class TrialResult(_TrialResultBase, total=False):
-    """run_single_trial 的返回值"""
+    """Single attempt execution result."""
     layer_stopped: Optional[ValidationLayer]
     validation: Dict[str, ValidationResult]
     metrics: TrainingMetrics
@@ -345,7 +345,7 @@ class _TrialSummaryItemBase(TypedDict):
 
 
 class TrialSummaryItem(_TrialSummaryItemBase, total=False):
-    """orchestrate_trials 中 trials 列表的元素"""
+    """Summary item for an executed attempt."""
     layer_stopped: Optional[str]
     metrics: TrainingMetrics
 
@@ -377,7 +377,7 @@ class _ExperimentSummaryBase(TypedDict):
 
 
 class ExperimentSummary(_ExperimentSummaryBase, total=False):
-    """orchestrate_trials 的最终返回值"""
+    """Top-level summary for the agentic loop."""
     best_trial: Optional[int]
     best_ssim: float
     improvement: Optional[float]

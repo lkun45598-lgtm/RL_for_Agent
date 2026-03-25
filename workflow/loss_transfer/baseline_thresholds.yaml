@@ -1,0 +1,8 @@
+model: swinir
+n_runs: 1
+ssim_mean: 0.7321976009342406
+ssim_std: 0.0
+psnr_mean: 12.179431215922039
+psnr_std: 0.0
+viable_threshold: 0.7221976009342406
+improvement_threshold: 0.7421976009342406

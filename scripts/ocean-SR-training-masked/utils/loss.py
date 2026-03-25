@@ -16,15 +16,401 @@ Loss functions for ocean SR training (masked version).
   - 原始版本: v1.0.0
 """
 
+import inspect
 import json
 import torch
 import torch.nn.functional as F
 from time import time
 import torch.distributed as dist
+from typing import Any, Callable, Dict, Optional
 
 _loss_dict = {
 
 }
+
+
+def _reduce_batch(values: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+    if reduction == "none":
+        return values
+    if reduction == "sum":
+        return values.sum()
+    if reduction == "mean":
+        return values.mean()
+    raise ValueError(f"Unsupported reduction: {reduction}")
+
+
+def _align_mask(mask: Optional[torch.Tensor], ref: torch.Tensor) -> Optional[torch.Tensor]:
+    if mask is None:
+        return None
+    if mask.dim() != 4 or ref.dim() != 4:
+        return mask
+
+    aligned = mask
+    if aligned.shape[0] != ref.shape[0]:
+        if aligned.shape[0] != 1:
+            raise ValueError(
+                f"Mask batch size {aligned.shape[0]} does not match reference batch size {ref.shape[0]}"
+            )
+        aligned = aligned.expand(ref.shape[0], aligned.shape[1], aligned.shape[2], aligned.shape[3])
+
+    if aligned.shape[1] != ref.shape[1] or aligned.shape[2] != ref.shape[2]:
+        aligned = aligned.permute(0, 3, 1, 2).float()
+        aligned = F.interpolate(aligned, size=(ref.shape[1], ref.shape[2]), mode="nearest")
+        aligned = aligned.permute(0, 2, 3, 1)
+
+    if aligned.shape[-1] != ref.shape[-1]:
+        if aligned.shape[-1] != 1:
+            raise ValueError(
+                f"Mask channel size {aligned.shape[-1]} does not match reference channel size {ref.shape[-1]}"
+            )
+        aligned = aligned.expand(aligned.shape[0], aligned.shape[1], aligned.shape[2], ref.shape[-1])
+
+    return aligned.bool()
+
+
+def _masked_rel_lp(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    *,
+    p: int = 2,
+    eps: float = 1e-8,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    batch = pred.size(0)
+    aligned_mask = _align_mask(mask, pred)
+    if aligned_mask is None:
+        mask_flat = torch.ones_like(pred.reshape(batch, -1))
+    else:
+        mask_flat = aligned_mask.reshape(batch, -1).float()
+
+    pred_flat = pred.reshape(batch, -1)
+    target_flat = target.reshape(batch, -1)
+    diff = (pred_flat - target_flat) * mask_flat
+    target_masked = target_flat * mask_flat
+
+    diff_norms = torch.norm(diff, p, dim=1)
+    target_norms = torch.norm(target_masked, p, dim=1).clamp(min=float(eps))
+    rel_errors = diff_norms / target_norms
+    return _reduce_batch(rel_errors, reduction=reduction)
+
+
+def masked_rel_l1(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    *,
+    eps: float = 1e-8,
+    reduction: str = "mean",
+    **kwargs,
+) -> torch.Tensor:
+    return _masked_rel_lp(pred, target, mask=mask, p=1, eps=eps, reduction=reduction)
+
+
+def masked_rel_l2(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    *,
+    eps: float = 1e-8,
+    reduction: str = "mean",
+    **kwargs,
+) -> torch.Tensor:
+    return _masked_rel_lp(pred, target, mask=mask, p=2, eps=eps, reduction=reduction)
+
+
+def masked_abs_l1(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    *,
+    reduction: str = "mean",
+    **kwargs,
+) -> torch.Tensor:
+    diff = (pred - target).abs()
+    if mask is not None:
+        valid = _align_mask(mask, diff).float()
+        per_item = (diff * valid).reshape(diff.size(0), -1).sum(dim=1) / valid.reshape(diff.size(0), -1).sum(dim=1).clamp(min=1.0)
+        return _reduce_batch(per_item, reduction=reduction)
+    per_item = diff.reshape(diff.size(0), -1).mean(dim=1)
+    return _reduce_batch(per_item, reduction=reduction)
+
+
+def masked_abs_mse(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    *,
+    reduction: str = "mean",
+    **kwargs,
+) -> torch.Tensor:
+    diff = (pred - target).pow(2)
+    if mask is not None:
+        valid = _align_mask(mask, diff).float()
+        per_item = (diff * valid).reshape(diff.size(0), -1).sum(dim=1) / valid.reshape(diff.size(0), -1).sum(dim=1).clamp(min=1.0)
+        return _reduce_batch(per_item, reduction=reduction)
+    per_item = diff.reshape(diff.size(0), -1).mean(dim=1)
+    return _reduce_batch(per_item, reduction=reduction)
+
+
+def _align_aux_tensor(value: Optional[torch.Tensor], pred: torch.Tensor, name: str) -> torch.Tensor:
+    if value is None:
+        raise ValueError(f"Missing required auxiliary loss input: {name}")
+    if not torch.is_tensor(value):
+        raise TypeError(f"Auxiliary loss input {name} must be a tensor, got {type(value)}")
+    if value.dim() != 4:
+        raise ValueError(f"Auxiliary loss input {name} must be BHWC 4D tensor, got shape {tuple(value.shape)}")
+    if value.shape[0] != pred.shape[0]:
+        if value.shape[0] != 1:
+            raise ValueError(
+                f"Auxiliary loss input {name} batch mismatch: {tuple(value.shape)} vs {tuple(pred.shape)}"
+            )
+        value = value.expand(pred.shape[0], value.shape[1], value.shape[2], value.shape[3])
+    if value.shape[1] == pred.shape[1] and value.shape[2] == pred.shape[2]:
+        return value.to(device=pred.device, dtype=pred.dtype)
+    tensor = value.permute(0, 3, 1, 2).to(device=pred.device, dtype=pred.dtype)
+    tensor = F.interpolate(tensor, size=(pred.shape[1], pred.shape[2]), mode="bilinear", align_corners=False)
+    return tensor.permute(0, 2, 3, 1).contiguous()
+
+
+def _masked_channel_sum_mean(value: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    per_pixel = value.sum(dim=-1, keepdim=True)
+    if mask is not None:
+        valid = _align_mask(mask, per_pixel).float()
+        return (per_pixel * valid).sum() / valid.sum().clamp(min=1.0)
+    return per_pixel.mean()
+
+
+def masked_mixture_laplace_nll(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    *,
+    weight: Optional[torch.Tensor] = None,
+    log_b: Optional[torch.Tensor] = None,
+    use_var: bool = True,
+    var_min: float = 0.0,
+    var_max: float = 10.0,
+    weight_clip: float = 12.0,
+    log_b_clip: float = 6.0,
+    aux_reg: float = 0.0,
+    eps: float = 1e-6,
+    **kwargs,
+) -> torch.Tensor:
+    pred_f = pred.float()
+    target_f = target.float()
+
+    if not use_var:
+        return masked_abs_l1(pred_f, target_f, mask=mask)
+
+    weight_t = _align_aux_tensor(weight, pred, "weight")
+    log_b_t = _align_aux_tensor(log_b, pred, "log_b")
+
+    weight_logits = weight_t.float().clamp(min=-abs(float(weight_clip)), max=abs(float(weight_clip)))
+
+    positive_cap = max(float(var_max), 1e-3)
+    negative_floor = float(var_min)
+    if negative_floor >= 0.0:
+        negative_floor = -positive_cap
+
+    if log_b_t.shape[-1] == 1:
+        stabilized_log_b = log_b_t.float().clamp(min=negative_floor, max=positive_cap)
+    else:
+        positive_branch = log_b_t[..., :1].float().clamp(min=0.0, max=positive_cap)
+        negative_branch = log_b_t[..., 1:].float().clamp(min=negative_floor, max=0.0)
+        stabilized_log_b = torch.cat([positive_branch, negative_branch], dim=-1)
+    stabilized_log_b = stabilized_log_b.clamp(min=-abs(float(log_b_clip)), max=abs(float(log_b_clip)))
+
+    residual_abs = (pred_f - target_f).abs().unsqueeze(-1)
+    weight_logits = weight_logits.unsqueeze(-2)
+    stabilized_log_b = stabilized_log_b.unsqueeze(-2)
+    inv_b = torch.exp((-stabilized_log_b).clamp(max=12.0)).clamp(max=1.0 / max(float(eps), 1e-6))
+    log_weight = F.log_softmax(weight_logits.squeeze(-2), dim=-1).unsqueeze(-2)
+    nll = -torch.logsumexp(
+        log_weight - torch.log(pred_f.new_tensor(2.0)) - stabilized_log_b - residual_abs * inv_b,
+        dim=-1,
+    )
+    nll = torch.nan_to_num(nll, nan=1e4, posinf=1e4, neginf=0.0)
+
+    loss = _masked_channel_sum_mean(nll, mask=mask)
+    if aux_reg > 0.0:
+        loss = loss + float(aux_reg) * (weight_logits.square().mean() + stabilized_log_b.square().mean())
+    return loss
+
+
+_loss_dict.update(
+    {
+        "l1": masked_abs_l1,
+        "l2": masked_abs_mse,
+        "masked_abs_l1": masked_abs_l1,
+        "masked_abs_mse": masked_abs_mse,
+        "masked_rel_l1": masked_rel_l1,
+        "masked_rel_l2": masked_rel_l2,
+        "masked_mixture_laplace_nll": masked_mixture_laplace_nll,
+    }
+)
+
+
+def _resolve_binding(binding: Any, context: Dict[str, Any]) -> Any:
+    if not isinstance(binding, str):
+        return binding
+    if binding in context:
+        return context[binding]
+
+    current: Any = context
+    for token in binding.split("."):
+        if isinstance(current, dict) and token in current:
+            current = current[token]
+            continue
+        raise KeyError(f"Unable to resolve loss binding: {binding}")
+    return current
+
+
+class SpecDrivenLoss:
+    """Build a loss from a registry recipe plus params/bindings."""
+
+    def __init__(
+        self,
+        recipe: str,
+        params: Optional[Dict[str, Any]] = None,
+        bindings: Optional[Dict[str, Any]] = None,
+        extra_kwargs_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+    ):
+        if recipe not in _loss_dict:
+            raise KeyError(f"Unknown loss recipe: {recipe}")
+        self.recipe = recipe
+        self.recipe_fn = _loss_dict[recipe]
+        self.params = dict(params or {})
+        self.bindings = dict(bindings or {})
+        self.extra_kwargs_provider = extra_kwargs_provider
+        self.signature = inspect.signature(self.recipe_fn)
+        self.accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in self.signature.parameters.values()
+        )
+
+    def _build_context(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        runtime_kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        context: Dict[str, Any] = {
+            "pred": pred,
+            "target": target,
+            "mask": mask,
+        }
+        if self.extra_kwargs_provider is not None:
+            extra = self.extra_kwargs_provider() or {}
+            if not isinstance(extra, dict):
+                raise TypeError("extra_kwargs_provider must return a dict")
+            context["loss_inputs"] = extra
+            for key, value in extra.items():
+                context.setdefault(key, value)
+        context.update(runtime_kwargs)
+        return context
+
+    def __call__(self, pred, target, mask=None, **kwargs):
+        context = self._build_context(pred, target, mask, kwargs)
+        call_kwargs: Dict[str, Any] = {}
+
+        for key, value in self.bindings.items():
+            call_kwargs[key] = _resolve_binding(value, context)
+
+        for key in ("pred", "target", "mask"):
+            if key not in call_kwargs:
+                call_kwargs[key] = context[key]
+
+        for key, value in self.params.items():
+            call_kwargs.setdefault(key, value)
+
+        if self.accepts_kwargs:
+            for key, value in context.items():
+                call_kwargs.setdefault(key, value)
+        else:
+            call_kwargs = {
+                key: value
+                for key, value in call_kwargs.items()
+                if key in self.signature.parameters
+            }
+
+        return self.recipe_fn(**call_kwargs)
+
+
+class CompositeSpecLoss:
+    """Weighted sum of multiple spec-driven loss terms."""
+
+    def __init__(self, terms, extra_kwargs_provider: Optional[Callable[[], Dict[str, Any]]] = None):
+        self.extra_kwargs_provider = extra_kwargs_provider
+        self.terms = []
+        for idx, term_cfg in enumerate(terms):
+            if not isinstance(term_cfg, dict):
+                raise TypeError(f"loss.terms[{idx}] must be a dict")
+            recipe = term_cfg.get("recipe")
+            if not isinstance(recipe, str) or not recipe.strip():
+                raise ValueError(f"loss.terms[{idx}].recipe must be a non-empty string")
+            weight = float(term_cfg.get("weight", 1.0))
+            term = SpecDrivenLoss(
+                recipe=recipe.strip(),
+                params=term_cfg.get("params", {}),
+                bindings=term_cfg.get("bindings", {}),
+                extra_kwargs_provider=None,
+            )
+            self.terms.append((weight, recipe, term))
+
+    def __call__(self, pred, target, mask=None, **kwargs):
+        shared_kwargs = dict(kwargs)
+        if self.extra_kwargs_provider is not None:
+            extra = self.extra_kwargs_provider() or {}
+            if not isinstance(extra, dict):
+                raise TypeError("extra_kwargs_provider must return a dict")
+            shared_kwargs.setdefault("loss_inputs", extra)
+            for key, value in extra.items():
+                shared_kwargs.setdefault(key, value)
+
+        total = pred.new_tensor(0.0)
+        for weight, _recipe, term in self.terms:
+            if weight == 0.0:
+                continue
+            total = total + float(weight) * term(pred, target, mask=mask, **shared_kwargs)
+        return total
+
+
+def build_loss_from_config(
+    loss_cfg: Optional[Dict[str, Any]],
+    *,
+    extra_kwargs_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+):
+    if not loss_cfg:
+        return MaskedLpLoss(size_average=False)
+
+    if not isinstance(loss_cfg, dict):
+        raise TypeError("loss config must be a dict when provided")
+
+    mode = str(loss_cfg.get("mode", loss_cfg.get("type", ""))).strip().lower()
+    if mode in {"", "default", "masked_lp"} and "recipe" not in loss_cfg and "terms" not in loss_cfg:
+        return MaskedLpLoss(
+            p=int(loss_cfg.get("p", 2)),
+            reduction=bool(loss_cfg.get("reduction", True)),
+            size_average=bool(loss_cfg.get("size_average", False)),
+        )
+
+    if "terms" in loss_cfg:
+        terms = loss_cfg.get("terms")
+        if not isinstance(terms, list) or not terms:
+            raise ValueError("loss.terms must be a non-empty list")
+        return CompositeSpecLoss(terms, extra_kwargs_provider=extra_kwargs_provider)
+
+    recipe = loss_cfg.get("recipe")
+    if not isinstance(recipe, str) or not recipe.strip():
+        raise ValueError("loss.recipe must be a non-empty string")
+    return SpecDrivenLoss(
+        recipe=recipe.strip(),
+        params=loss_cfg.get("params", {}),
+        bindings=loss_cfg.get("bindings", {}),
+        extra_kwargs_provider=extra_kwargs_provider,
+    )
 
 
 class CompositeLoss:
@@ -162,34 +548,10 @@ class MaskedLpLoss(object):
         self.size_average = size_average
 
     def __call__(self, x, y, mask=None, **kwargs):
-        """
-        x, y: [B, H, W, C]
-        mask: [1, H, W, 1] bool，True=海洋（有效像素），False=陆地
-              如果 mask=None，退化为在所有像素上计算（等价于原 LpLoss 无 NaN 场景）
-        """
-        B = x.size(0)
-        x_flat = x.reshape(B, -1)
-        y_flat = y.reshape(B, -1)
-
-        if mask is not None:
-            mask_flat = mask.expand_as(x).reshape(B, -1).float()
-        else:
-            mask_flat = torch.ones_like(x_flat)
-
-        # 只在海洋格点上计算差异
-        diff = (x_flat - y_flat) * mask_flat
-        y_masked = y_flat * mask_flat
-
-        diff_norms = torch.norm(diff, self.p, dim=1)
-        y_norms = torch.norm(y_masked, self.p, dim=1).clamp(min=1e-8)
-        rel_errors = diff_norms / y_norms
-
+        reduction = "none"
         if self.reduction:
-            if self.size_average:
-                return rel_errors.mean()
-            else:
-                return rel_errors.sum()
-        return rel_errors
+            reduction = "mean" if self.size_average else "sum"
+        return _masked_rel_lp(x, y, mask=mask, p=self.p, eps=1e-8, reduction=reduction)
 
 
 class AverageRecord(object):

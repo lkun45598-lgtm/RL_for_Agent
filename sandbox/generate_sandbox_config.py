@@ -114,7 +114,7 @@ TRAIN_TEMPLATE = {
     'distribute': False,
     'distribute_mode': 'DDP',
     'device_ids': [0],
-    'use_amp': True,
+    'use_amp': False,
 }
 
 # 模型特定的训练参数覆盖

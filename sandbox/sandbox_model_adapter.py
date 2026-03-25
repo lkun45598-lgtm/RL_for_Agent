@@ -62,6 +62,16 @@ def _apply_activation(x: torch.Tensor, name: str) -> torch.Tensor:
     raise ValueError(f"Unsupported sandbox adapter activation: {name}")
 
 
+def _apply_affine(x: torch.Tensor, cfg: Dict[str, Any]) -> torch.Tensor:
+    scale = cfg.get("output_scale")
+    shift = cfg.get("output_shift")
+    if scale is not None:
+        x = x * float(scale)
+    if shift is not None:
+        x = x + float(shift)
+    return x
+
+
 class AuxLossHeadAdapter(nn.Module):
     """
     Wrap a base SR model and cache:
@@ -95,6 +105,8 @@ class AuxLossHeadAdapter(nn.Module):
                 nn.GELU(),
                 nn.Conv2d(head_hidden, out_channels, kernel_size=1),
             )
+            if bool(cfg.get("zero_init", False)) and hasattr(head[-1], "weight"):
+                nn.init.zeros_(head[-1].weight)
             bias_init = cfg.get("bias_init")
             if bias_init is not None and hasattr(head[-1], "bias") and head[-1].bias is not None:
                 nn.init.constant_(head[-1].bias, float(bias_init))
@@ -107,8 +119,10 @@ class AuxLossHeadAdapter(nn.Module):
 
         for name, head in self.heads.items():
             cfg = self.heads_cfg.get(name, {})
-            value = head(pred_nchw).permute(0, 2, 3, 1).contiguous()
+            head_input = pred_nchw.detach() if bool(cfg.get("detach_input", False)) else pred_nchw
+            value = head(head_input).permute(0, 2, 3, 1).contiguous()
             value = _apply_activation(value, str(cfg.get("activation", "none")))
+            value = _apply_affine(value, cfg)
             loss_inputs[name] = value
 
         self._latest_loss_inputs = loss_inputs

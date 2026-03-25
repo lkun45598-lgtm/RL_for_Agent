@@ -16,6 +16,7 @@
 
 import os
 import sys
+import inspect
 import importlib.util
 from typing import Any, Dict
 
@@ -26,6 +27,7 @@ if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 
 from trainers.base import BaseTrainer
+from models import _model_dict
 from sandbox_model_adapter import maybe_wrap_model_with_aux_adapter
 
 
@@ -88,8 +90,79 @@ class SandboxTrainer(BaseTrainer):
         )
         super().__init__(args)
 
+    @staticmethod
+    def _filter_supported_model_init_kwargs(model_factory, raw_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        if not raw_kwargs:
+            return {}
+        try:
+            signature = inspect.signature(model_factory)
+        except (TypeError, ValueError):
+            return {}
+
+        parameters = signature.parameters.values()
+        if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
+            return dict(raw_kwargs)
+
+        supported_names = {
+            param.name
+            for param in parameters
+            if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        }
+        return {
+            key: value
+            for key, value in raw_kwargs.items()
+            if key in supported_names
+        }
+
+    def _resolve_model_init_kwargs(self) -> Dict[str, Any]:
+        resolved: Dict[str, Any] = {}
+
+        raw_extra_kwargs = self.args.get('sandbox_model_init_kwargs')
+        if isinstance(raw_extra_kwargs, dict):
+            resolved.update(raw_extra_kwargs)
+
+        raw_model_extra_kwargs = self.model_args.get('sandbox_model_init_kwargs')
+        if isinstance(raw_model_extra_kwargs, dict):
+            resolved.update(raw_model_extra_kwargs)
+
+        if 'output_aux_loss_inputs' in self.model_args:
+            resolved.setdefault(
+                'output_aux_loss_inputs',
+                bool(self.model_args.get('output_aux_loss_inputs')),
+            )
+
+        return resolved
+
     def build_model(self, **kwargs):
-        model = BaseTrainer.build_model(self, **kwargs)
+        if self.model_name not in _model_dict:
+            raise NotImplementedError("Model {} not implemented".format(self.model_name))
+
+        model_factory = _model_dict[self.model_name]
+        model_init_kwargs = self._resolve_model_init_kwargs()
+        supported_kwargs = {}
+
+        if callable(model_factory) and model_init_kwargs:
+            supported_kwargs = self._filter_supported_model_init_kwargs(model_factory, model_init_kwargs)
+            ignored_keys = sorted(set(model_init_kwargs) - set(supported_kwargs))
+            if ignored_keys:
+                self.main_log(
+                    "Sandbox model init kwargs ignored for {}: {}".format(
+                        self.model_name,
+                        ", ".join(ignored_keys),
+                    )
+                )
+
+        if callable(model_factory) and supported_kwargs:
+            model = model_factory(self.model_args, **supported_kwargs)
+            self.main_log(
+                "Sandbox model init kwargs enabled for {}: {}".format(
+                    self.model_name,
+                    ", ".join(sorted(supported_kwargs.keys())),
+                )
+            )
+        else:
+            model = BaseTrainer.build_model(self, **kwargs)
+
         adapter_cfg = self.args.get('sandbox_adapter', {})
         if adapter_cfg and adapter_cfg.get('enabled', False):
             model = maybe_wrap_model_with_aux_adapter(
@@ -107,8 +180,10 @@ class SandboxTrainer(BaseTrainer):
     def _get_model_loss_inputs(self):
         model = self._unwrap()
         if hasattr(model, 'consume_latest_loss_inputs'):
-            return model.consume_latest_loss_inputs()
-        return {}
+            latest = model.consume_latest_loss_inputs()
+            if latest:
+                return latest
+        return self._consume_model_loss_inputs()
 
     def build_loss(self, **kwargs):
         return SandboxLossWrapper(

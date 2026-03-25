@@ -4,9 +4,13 @@ Base trainer for ocean SR training (masked version).
 @author Leizheng
 @contributors kongzhiquan
 @date 2026-02-06
-@version 5.3.0
+@version 5.4.0
 
 @changelog
+  - 2026-03-25 Leizheng: v5.4.0 loss factory + structured model output support
+    - build_loss() 支持从 args['loss'] 构造 SpecDrivenLoss / composite spec loss
+    - 统一兼容 model 返回 tensor / (pred, loss_inputs) / {'pred': ..., 'loss_inputs': ...}
+    - 为“最小改动迁移论文 loss”保留原训练主循环接口
   - 2026-03-17 kongzhiquan: v5.3.0 __event__ 事件同步写入 train.log
     - _log_json_event 在 print 到 stdout 后，额外直接写 FileHandler.stream
     - 不经过 StreamHandler，不走 stderr，不影响 TS 进程管理器解析
@@ -83,7 +87,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 import sys
-from utils.loss import LossRecord, LpLoss, MaskedLpLoss
+from utils.loss import LossRecord, LpLoss, MaskedLpLoss, build_loss_from_config
 from utils.ddp import debug_barrier
 from utils.metrics import Evaluator, MaskedEvaluator
 from functools import partial
@@ -114,6 +118,7 @@ class BaseTrainer:
 
         # Patch 模式标志（影响验证时是否做 decode）
         self.patch_mode = self.data_args.get('patch_size', None) is not None
+        self._latest_model_loss_inputs = {}
 
         self.logger = logging.info if self.log_args.get('log', True) else print
         self.wandb = self.log_args.get('wandb', False)
@@ -189,6 +194,53 @@ class BaseTrainer:
         if isinstance(self.model, (DDP, nn.DataParallel)):
             return self.model.module
         return self.model
+
+    def _split_model_output(self, model_output):
+        loss_inputs = {}
+        pred = model_output
+
+        if isinstance(model_output, dict):
+            for key in ("pred", "prediction", "output", "final", "sample"):
+                pred = model_output.get(key)
+                if pred is not None:
+                    break
+            else:
+                raise KeyError("Model dict output must include one of: pred/prediction/output/final/sample")
+            raw_loss_inputs = model_output.get("loss_inputs", {})
+            if raw_loss_inputs is None:
+                raw_loss_inputs = {}
+            if not isinstance(raw_loss_inputs, dict):
+                raise TypeError("Model output field 'loss_inputs' must be a dict or None")
+            loss_inputs.update(raw_loss_inputs)
+        elif isinstance(model_output, (tuple, list)):
+            if not model_output:
+                raise ValueError("Model tuple/list output cannot be empty")
+            pred = model_output[0]
+            if len(model_output) > 1:
+                extra = model_output[1] or {}
+                if not isinstance(extra, dict):
+                    raise TypeError("Model tuple/list second element must be a dict or None")
+                loss_inputs.update(extra)
+
+        if not torch.is_tensor(pred):
+            raise TypeError(f"Trainer requires tensor prediction output, got {type(pred)}")
+
+        self._latest_model_loss_inputs = loss_inputs
+        return pred
+
+    def _consume_model_loss_inputs(self):
+        latest = dict(self._latest_model_loss_inputs)
+        self._latest_model_loss_inputs = {}
+        return latest
+
+    def _forward_model(self, x, *, use_checkpoint=False):
+        if use_checkpoint and self.gradient_checkpointing:
+            model_output = torch.utils.checkpoint.checkpoint(
+                self.model, x, use_reentrant=False
+            )
+        else:
+            model_output = self.model(x)
+        return self._split_model_output(model_output)
     
     def set_distribute(self):
         self.dist = self.train_args.get('distribute', False)
@@ -279,8 +331,10 @@ class BaseTrainer:
         return model
     
     def build_loss(self, **kwargs):
-        loss_fn = MaskedLpLoss(size_average=False)
-        return loss_fn
+        return build_loss_from_config(
+            self.args.get('loss'),
+            extra_kwargs_provider=self._consume_model_loss_inputs,
+        )
 
     def build_evaluator(self):
         return MaskedEvaluator(shape=self.data_args['shape'])
@@ -701,12 +755,7 @@ class BaseTrainer:
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
             with torch.amp.autocast('cuda', enabled=self.use_amp):
-                if self.gradient_checkpointing:
-                    y_pred = torch.utils.checkpoint.checkpoint(
-                        self.model, x, use_reentrant=False
-                    )
-                else:
-                    y_pred = self.model(x)
+                y_pred = self._forward_model(x, use_checkpoint=True)
                 loss = self.loss_fn(y_pred, y, mask=mask_hr)
             loss_record.update({"train_loss": loss.sum().item()}, n=x.size(0))
             loss = loss.mean()
@@ -772,7 +821,7 @@ class BaseTrainer:
 
     def inference(self, x, y, **kwargs):
         x, orig_h, orig_w = self._pad_to_divisible(x, self.model_divisor, channel_last=True)
-        result = self.model(x)
+        result = self._forward_model(x, use_checkpoint=False)
         result = self._crop_to_original(result, y.shape[1], y.shape[2], channel_last=True)
         return result.reshape(y.shape)
     

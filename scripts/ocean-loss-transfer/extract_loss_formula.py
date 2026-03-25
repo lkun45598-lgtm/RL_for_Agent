@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from formula_interface_analysis import ensure_formula_interface_analysis
+from loss_spec_builder import build_loss_spec_draft, write_loss_spec_yaml
 from prepare_context import prepare_context
 from sandbox_adapter_bridge import draft_adapter_heads
 from write_loss_formula import validate_formula_spec
@@ -46,6 +47,22 @@ def _dedupe_keep_order(items: List[str]) -> List[str]:
         seen.add(key)
         out.append(key)
     return out
+
+
+def _cleanup_pdf_formula_candidate(text: str) -> str:
+    cleaned = text.replace('-\n', '')
+    cleaned = re.sub(r'\n+', '\n', cleaned)
+    cleaned = re.sub(r'\\\s+([A-Za-z])', r'\\\1', cleaned)
+    cleaned = re.sub(
+        r'\\([A-Za-z])(?:\s+([A-Za-z]))+',
+        lambda m: '\\' + re.sub(r'\s+', '', m.group(0)[1:]),
+        cleaned,
+    )
+    cleaned = re.sub(r'(?<=[A-Za-z])\s+_(?=\w)', '_', cleaned)
+    cleaned = re.sub(r'(?<=[A-Za-z])\s+\^(?=\w)', '^', cleaned)
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)
+    cleaned = re.sub(r'\n\s+', '\n', cleaned)
+    return cleaned.strip()
 
 
 def _extract_equation_like_snippets(paper: Optional[Dict[str, Any]]) -> List[str]:
@@ -277,6 +294,98 @@ def _collect_aux_vars(primary_files: List[Dict[str, Any]]) -> List[str]:
     return _dedupe_keep_order(found)
 
 
+def _join_paper_text(paper: Optional[Dict[str, Any]]) -> str:
+    if not paper or not paper.get("success"):
+        return ""
+
+    parts: List[str] = []
+    abstract = paper.get("abstract")
+    if isinstance(abstract, str):
+        parts.append(abstract)
+
+    for entry in paper.get("loss_snippets", [])[:10]:
+        snippet = entry.get("snippet")
+        if isinstance(snippet, str):
+            parts.append(snippet)
+
+    for section in paper.get("sections", [])[:10]:
+        heading = section.get("heading")
+        text = section.get("text")
+        if isinstance(heading, str):
+            parts.append(heading)
+        if isinstance(text, str):
+            parts.append(text[:1200])
+
+    return "\n".join(parts)
+
+
+def _infer_structure_hints(
+    primary_files: List[Dict[str, Any]],
+    paper: Optional[Dict[str, Any]],
+    aux_vars: List[str],
+) -> Dict[str, Any]:
+    feature_pattern = re.compile(r"\b(feat|feature|hidden|latent|embedding|context)\b", re.IGNORECASE)
+    external_pattern = re.compile(r"\b(vgg|lpips|perceptual|discriminator|gan|critic|adversarial|teacher)\b", re.IGNORECASE)
+    multi_stage_pattern = re.compile(
+        r"\b(multi[-_ ]scale|multiscale|multi[-_ ]stage|pyramid|deep[_ ]supervision|scale_weights|auxiliary loss|aux loss)\b",
+        re.IGNORECASE,
+    )
+    structured_return_pattern = re.compile(r"return\s*(\{|\w+\s*,)", re.IGNORECASE)
+
+    forward_loss_paths: List[str] = []
+    structured_output_paths: List[str] = []
+    feature_term_paths: List[str] = []
+    external_term_paths: List[str] = []
+    multi_stage_paths: List[str] = []
+    explicit_loss_inputs_paths: List[str] = []
+
+    for file_info in primary_files[:10]:
+        path = str(file_info.get("path", ""))
+        content = str(file_info.get("content", ""))
+        lowered = content.lower()
+
+        if "def forward" in lowered and "loss" in lowered:
+            forward_loss_paths.append(path)
+        if "loss_inputs" in lowered:
+            explicit_loss_inputs_paths.append(path)
+        if structured_return_pattern.search(content):
+            structured_output_paths.append(path)
+        if feature_pattern.search(content):
+            feature_term_paths.append(path)
+        if external_pattern.search(content):
+            external_term_paths.append(path)
+        if multi_stage_pattern.search(content):
+            multi_stage_paths.append(path)
+
+    paper_text = _join_paper_text(paper)
+    lowered_aux = [item.lower() for item in aux_vars]
+    distributional_aux = any(
+        candidate in lowered_aux
+        for candidate in ("weight", "log_b", "sigma", "variance", "var", "uncertainty", "confidence")
+    ) or bool(
+        re.search(r"\b(mixture|laplace|gaussian|uncertainty|variance|sigma|log_b|weight logits?)\b", paper_text, re.IGNORECASE)
+    )
+
+    return {
+        "loss_defined_inside_model_forward": bool(forward_loss_paths),
+        "model_returns_structured_outputs": bool(structured_output_paths),
+        "uses_feature_or_hidden_state_terms": bool(feature_term_paths) or bool(feature_pattern.search(paper_text)),
+        "uses_pretrained_or_adversarial_terms": bool(external_term_paths) or bool(external_pattern.search(paper_text)),
+        "uses_multi_stage_or_multi_scale_terms": bool(multi_stage_paths) or bool(multi_stage_pattern.search(paper_text)),
+        "uses_distributional_aux_heads": distributional_aux,
+        "explicit_loss_inputs_container": bool(explicit_loss_inputs_paths),
+        "detected_aux_variables": aux_vars,
+        "evidence_paths": {
+            "forward_loss": forward_loss_paths[:5],
+            "structured_outputs": structured_output_paths[:5],
+            "feature_terms": feature_term_paths[:5],
+            "external_terms": external_term_paths[:5],
+            "multi_stage_terms": multi_stage_paths[:5],
+            "explicit_loss_inputs": explicit_loss_inputs_paths[:5],
+        },
+    }
+
+
 def extract_loss_formula_draft(
     code_repo_path: str,
     paper_slug: str,
@@ -296,21 +405,32 @@ def extract_loss_formula_draft(
     paper = context.get("paper")
     primary_files = context.get("primary_files", [])
     params = _collect_params(code_repo_path, primary_files)
-    latex_candidates = _extract_equation_like_snippets(paper)
+    raw_formula_candidates = _extract_equation_like_snippets(paper)
+    latex_candidates = [_cleanup_pdf_formula_candidate(item) for item in raw_formula_candidates]
+    latex_candidates = _dedupe_keep_order(latex_candidates)
     if not latex_candidates:
         latex_candidates = ["LOSS_FORMULA_TODO"]
 
     aux_vars = _collect_aux_vars(primary_files)
     symbol_map = _infer_symbol_map_from_params(params, paper, aux_vars)
     adapter_heads = draft_adapter_heads(aux_vars) if aux_vars else {}
+    structure_hints = _infer_structure_hints(primary_files, paper, aux_vars)
 
     spec: Dict[str, Any] = {
         "latex": latex_candidates,
+        "raw_formula_candidates": raw_formula_candidates,
+        "latex_extraction_status": (
+            "heuristic_pdf_text_windows"
+            if raw_formula_candidates
+            else "missing_formula_candidates"
+        ),
         "params": params,
         "symbol_map": symbol_map,
         "adapter_heads": adapter_heads,
         "notes": (
             "AUTO-DRAFT: generated heuristically from paper snippets + code/config evidence. "
+            "The `latex` field is currently a cleaned candidate reconstructed from PDF text windows, not guaranteed "
+            "to be exact author LaTeX. Check `raw_formula_candidates` when formula formatting matters. "
             "You must manually review symbol names, equation formatting, and whether all predicted variables "
             "required by the paper are represented. adapter_heads is only a sandbox-side draft and may need "
             "manual correction for channel counts or activations."
@@ -322,15 +442,18 @@ def extract_loss_formula_draft(
             "paper_title": ((paper or {}).get("metadata") or {}).get("title", paper_slug) if isinstance(paper, dict) else paper_slug,
             "primary_files": _collect_code_evidence(primary_files),
             "detected_aux_variables": aux_vars,
+            "structure_hints": structure_hints,
         },
     }
 
     spec = ensure_formula_interface_analysis(spec)
     validation = validate_formula_spec(spec)
+    loss_spec_draft = build_loss_spec_draft(spec)
     result: Dict[str, Any] = {
         "status": "success" if validation["status"] != "error" else "error",
         "validation": validation,
         "formula_spec": spec,
+        "loss_spec_draft": loss_spec_draft,
     }
 
     final_output_path = output_path or context.get("formula_output_path")
@@ -339,8 +462,12 @@ def extract_loss_formula_draft(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
         result["written_path"] = str(out)
+        loss_spec_result = write_loss_spec_yaml(loss_spec_draft, str(out.parent / "loss_spec.yaml"))
+        result["loss_spec_written_path"] = loss_spec_result["written_path"]
+        result["loss_spec_write"] = loss_spec_result
     else:
         result["written_path"] = None
+        result["loss_spec_written_path"] = None
 
     return result
 

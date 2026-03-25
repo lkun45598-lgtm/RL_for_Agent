@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -32,6 +33,73 @@ def _normalize_latex_text(text: str) -> str:
     return normalized
 
 
+def _compact_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _looks_like_mixture_laplace_formula(
+    latex_text: str,
+    normalized_latex: str,
+    compact_latex: str,
+    formula_spec: Dict[str, Any],
+) -> bool:
+    mixture_tokens = (
+        "mixlap",
+        "mixturelaplace",
+        "mixtureoflaplace",
+        "lmol",
+        "molloss",
+    )
+    log_tokens = (
+        "logsumexp",
+        "logmixlap",
+        "negative log-likelihood",
+        "negativeloglikelihood",
+        "nll",
+    )
+    laplace_tokens = (
+        "laplace",
+        "mixlap",
+        "mixturelaplace",
+        "mixtureoflaplace",
+    )
+
+    structure_hints = {}
+    raw_sources = formula_spec.get("sources", {})
+    if isinstance(raw_sources, dict):
+        source_hints = raw_sources.get("structure_hints", {})
+        if isinstance(source_hints, dict):
+            structure_hints = source_hints
+
+    has_mixture_marker = (
+        _contains_any(latex_text, ("mixlap", "mixture-of-laplace", "mixture of laplace", "mol loss", "lmol"))
+        or _contains_any(normalized_latex, ("mixlap", "mixture-of-laplace", "mixtureoflaplace"))
+        or _contains_any(compact_latex, mixture_tokens)
+    )
+    has_log_like_marker = (
+        _contains_any(latex_text, ("logsumexp", "negative log-likelihood", "nll"))
+        or _contains_any(normalized_latex, ("logsumexp", "negativelog-likelihood", "negativeloglikelihood", "nll"))
+        or _contains_any(compact_latex, log_tokens)
+        or ("log" in compact_latex and has_mixture_marker)
+    )
+    has_laplace_density_marker = (
+        _contains_any(latex_text, ("laplace", "mixlap"))
+        or _contains_any(normalized_latex, ("laplace", "mixlap"))
+        or _contains_any(compact_latex, laplace_tokens)
+    )
+    has_distributional_hint = bool(structure_hints.get("uses_distributional_aux_heads"))
+
+    return has_mixture_marker and (
+        has_log_like_marker
+        or (has_laplace_density_marker and has_distributional_hint)
+        or ("weight" in compact_latex and "logb" in compact_latex)
+    )
+
+
 def detect_formula_codegen_pattern(formula_spec: Optional[Dict[str, Any]]) -> Optional[str]:
     if not formula_spec:
         return None
@@ -47,14 +115,14 @@ def detect_formula_codegen_pattern(formula_spec: Optional[Dict[str, Any]]) -> Op
     }
     latex_text = _joined_latex_text(formula_spec).lower()
     normalized_latex = _normalize_latex_text(latex_text)
+    compact_latex = _compact_text(latex_text)
 
     if {"pred", "target", "weight", "log_b"}.issubset(mapped_vars):
-        if "nll" in normalized_latex and "logsum" in normalized_latex:
-            return "mixture_laplace_nll"
-        if (
-            "nll" in normalized_latex
-            and "logb" in normalized_latex
-            and ("|r|/b" in normalized_latex or "laplace" in normalized_latex)
+        if _looks_like_mixture_laplace_formula(
+            latex_text=latex_text,
+            normalized_latex=normalized_latex,
+            compact_latex=compact_latex,
+            formula_spec=formula_spec,
         ):
             return "mixture_laplace_nll"
 
