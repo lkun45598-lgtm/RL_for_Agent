@@ -1,7 +1,21 @@
 {
   "name": "ocean-loss-transfer",
-  "version": "1.0.0",
-  "description": "从论文迁移 loss 函数到 sandbox_loss.py",
+  "description": "论文 Loss 自动迁移技能 - 支持论文/代码联合分析、公式提取、analysis_plan 与 attempt 沙箱修复闭环",
+  "version": "3.1.0",
   "author": "Leizheng",
-  "tags": ["loss", "transfer", "ocean", "super-resolution"]
+  "contributors": ["Leizheng"],
+  "last_modified": "2026-03-26",
+  "baseDir": "./.skills/ocean-loss-transfer",
+  "tags": ["loss", "transfer", "ocean", "super-resolution", "formula", "agent-loop"],
+  "references": [
+    "references/workflow-detail.md",
+    "references/extraction-guide.md",
+    "references/analysis-plan.md",
+    "references/integration-paths.md",
+    "references/validation-layers.md",
+    "references/known-failures.md",
+    "references/trial-strategies.md",
+    "references/troubleshooting.md",
+    "references/loss-ir-schema.md"
+  ]
 }

@@ -4,41 +4,44 @@
 
 ---
 
-## Layer 1 验证失败（AST 错误）
+## 公式提取不稳定
 
-**原因**: 生成的代码语法错误或使用了禁止的 import
+**原因**: 论文里符号定义和代码变量名对不上
 
 **解决**:
-- 检查 `required_imports` 是否在白名单内
-- 确认模板渲染没有语法错误
+- 回到正文和实现细节小节重新找变量定义
+- 收紧 `symbol_map`，确保一一映射
+- 必要时让 `params` 显式写出论文常数
 
 ---
 
-## Layer 2 验证失败（NaN/Inf）
+## Layer 1 验证失败（AST/静态检查）
 
-**原因**: 数值不稳定，除零或 log(0)
+**原因**: 生成代码语法错误、签名不匹配或 import 不合规
 
 **解决**:
-- 在 Loss IR 中添加 `clamp_or_eps` 配置
-- 检查 normalization 是否正确
+- 先修 `candidate_loss.py`
+- 确认 `sandbox_loss(pred, target, mask=None, **kwargs)` 签名正确
+- 不要引入 repo 中不存在的依赖
 
 ---
 
-## Layer 3 验证失败（SSIM < 0.3）
+## Layer 2 验证失败（NaN/Inf 或 shape 问题）
 
-**原因**: Loss 函数导致训练崩溃
+**原因**: 数值不稳定、tensor shape 不匹配、mask 处理错误
 
 **解决**:
-- 检查是否触发已知失败模式
-- 降低新组件的权重系数
-- 使用 Fallback Hybrid 策略
+- 加入 epsilon、clamp、dtype cast
+- 检查 BHWC/HW/BCHW 维度约定
+- 检查是否误把额外 loss inputs 当成了普通 kwargs
 
 ---
 
-## 兼容性检查失败
+## Layer 3/4 暴露缺失 loss inputs
 
-**原因**: Loss 需要模型内部特征或预训练网络
+**原因**: integration path 选错，只改 loss 文件不够
 
 **解决**:
-- 修改 Loss IR，移除不兼容组件
-- 或放弃该论文，寻找其他方案
+- 重新判断是否应切换到 `adapter_wrapper` 或 `extend_model_outputs`
+- 在 attempt-scoped override/model copy 中补齐所需张量
+- 不要直接回退成错误的 `loss_only`

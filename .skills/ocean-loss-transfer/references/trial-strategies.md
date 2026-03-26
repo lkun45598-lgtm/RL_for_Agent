@@ -1,56 +1,47 @@
-# 5-Trial 策略说明
+# Attempt 策略说明
 
-结构化搜索策略，渐进式改进。
-
----
-
-## Trial 1: Faithful Core
-
-**目标**: 忠实移植论文核心组件
-
-**策略**:
-- 保留论文的核心 loss 组件
-- 使用我方的多尺度策略
-- 使用我方的 mask 处理
+本文档描述如何设计 attempts。只在你需要多轮试探或 repair 策略时再读。
 
 ---
 
-## Trial 2: Normalization Aligned
+## Attempt 1: Faithful
 
-**目标**: 对齐 normalization/reduction
+**目标**: 忠实迁移论文核心 loss
 
 **策略**:
-- 在 Trial 1 基础上
-- 对齐论文的 normalization 方式
-- 对齐论文的 reduction 方式
+- 保留论文核心组件和权重关系
+- 尽量少做工程化重写
+- 重点验证 integration path 是否选对
 
 ---
 
-## Trial 3: Weight Aligned
+## Attempt 2: Stabilized
 
-**目标**: 使用论文权重比例
+**目标**: 在 faithful 基础上补数值稳定性
 
 **策略**:
-- 在 Trial 2 基础上
-- 使用论文的权重系数
+- 加 epsilon / clamp / dtype guard
+- 明确 reduction / normalization / masked mean
+- 保留与公式一致的主结构
 
 ---
 
-## Trial 4: Numerical Stabilized
+## Attempt 3: Path-Corrective
 
-**目标**: 加入数值稳定技巧
+**目标**: 修正接入路径，而不是继续硬修 loss 表达式
 
 **策略**:
-- 在 Trial 3 基础上
-- 加入 epsilon/clamp
-- 加入 dtype cast
+- 如果 stop_layer 暴露缺失 loss inputs，补 adapter 或 model outputs
+- 如果只改 `candidate_loss.py` 不够，就切到更深的 path
+- 所有模型级改动都放在 attempt-scoped 副本里
 
 ---
 
-## Trial 5: Fallback Hybrid
+## Attempt 4: Conservative Fallback
 
-**目标**: 混入当前最优结构
+**目标**: 保住训练稳定性，再逐步恢复论文细节
 
 **策略**:
-- 取前 4 轮最好的新组件
-- 混入 exp#41 的最优结构
+- 降低高风险组件权重
+- 暂时关闭最不稳定的附加项
+- 先让 Layer 3/4 能稳定跑通
