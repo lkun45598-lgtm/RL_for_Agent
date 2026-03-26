@@ -12,7 +12,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from attempt_executor import _resolve_attempt_code, execute_attempt  # noqa: E402
+from loss_transfer.attempts.attempt_executor import _resolve_attempt_code, execute_attempt  # noqa: E402
 
 
 class AttemptExecutorIntegrationTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                 }
 
             with patch(
-                'attempt_executor.generate_candidate_loss',
+                'loss_transfer.attempts.attempt_executor.generate_candidate_loss',
                 side_effect=fake_generate_candidate_loss,
             ) as mock_generate:
                 code, source_kind, generation = _resolve_attempt_code(
@@ -122,11 +122,11 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                     'agent_response_path': str(response_path),
                 }
 
-            with patch('attempt_executor._load_baseline_thresholds', return_value=self._baseline()), patch(
-                'attempt_executor._resolve_attempt_code',
+            with patch('loss_transfer.attempts.attempt_executor._load_baseline_thresholds', return_value=self._baseline()), patch(
+                'loss_transfer.attempts.attempt_executor._resolve_attempt_code',
                 return_value=(initial_code, 'agent_code', {'status': 'success', 'agent_id': 'gen-1'}),
-            ), patch('attempt_executor._evaluate_candidate', side_effect=fake_evaluate), patch(
-                'attempt_executor._maybe_repair_candidate_code',
+            ), patch('loss_transfer.attempts.attempt_executor._evaluate_candidate', side_effect=fake_evaluate), patch(
+                'loss_transfer.attempts.attempt_executor._maybe_repair_candidate_code',
                 side_effect=fake_repair,
             ):
                 result = execute_attempt(
@@ -206,11 +206,11 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                     }
                 return None
 
-            with patch('attempt_executor._load_baseline_thresholds', return_value=self._baseline()), patch(
-                'attempt_executor._resolve_attempt_code',
+            with patch('loss_transfer.attempts.attempt_executor._load_baseline_thresholds', return_value=self._baseline()), patch(
+                'loss_transfer.attempts.attempt_executor._resolve_attempt_code',
                 return_value=(initial_code, 'agent_code', {'status': 'success', 'agent_id': 'gen-2'}),
-            ), patch('attempt_executor._evaluate_candidate', side_effect=fake_evaluate), patch(
-                'attempt_executor._maybe_repair_candidate_code',
+            ), patch('loss_transfer.attempts.attempt_executor._evaluate_candidate', side_effect=fake_evaluate), patch(
+                'loss_transfer.attempts.attempt_executor._maybe_repair_candidate_code',
                 side_effect=fake_repair,
             ):
                 result = execute_attempt(

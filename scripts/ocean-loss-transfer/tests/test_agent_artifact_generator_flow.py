@@ -11,11 +11,11 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from agent_artifact_generator import (  # noqa: E402
+from loss_transfer.agent.agent_artifact_generator import (  # noqa: E402
     _build_agent_edit_input_files,
     _finalize_candidate_edit_result,
 )
-from agent_edit_workspace import snapshot_editable_targets  # noqa: E402
+from loss_transfer.agent.agent_edit_workspace import snapshot_editable_targets  # noqa: E402
 
 
 class AgentArtifactGeneratorFlowTests(unittest.TestCase):

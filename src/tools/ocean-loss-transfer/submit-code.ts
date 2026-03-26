@@ -44,7 +44,7 @@ export const oceanLossTransferSubmitCode = defineTool({
     const pyCode = `
 import sys, json
 sys.path.insert(0, '${shellEscapeDouble(scriptDir)}')
-from attempt_executor import execute_attempt
+from loss_transfer.attempts.attempt_executor import execute_attempt
 
 attempt_spec = {
     'name': 'Agent-Generated (${strategy})',

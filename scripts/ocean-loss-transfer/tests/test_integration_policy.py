@@ -9,15 +9,15 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from integration_policy import (  # noqa: E402
+from loss_transfer.attempts.integration_policy import (  # noqa: E402
     build_attempt_edit_policy,
     integration_path_needs_adapter_overrides,
     integration_path_needs_model_tree,
     merge_attempt_with_edit_policy,
     resolve_recommended_integration_path,
 )
-from agent_edit_workspace import resolve_requested_override_files  # noqa: E402
-from agent_repair_loop import _normalize_attempts  # noqa: E402
+from loss_transfer.agent.agent_edit_workspace import resolve_requested_override_files  # noqa: E402
+from loss_transfer.agent.agent_repair_loop import _normalize_attempts  # noqa: E402
 
 
 class IntegrationPolicyTests(unittest.TestCase):

@@ -84,7 +84,9 @@ npm run dev
 
 ## Loss Transfer (论文 Loss 迁移)
 
-自动从论文代码迁移 loss 函数:
+当前版本的 loss-transfer 主流程围绕 `loss_formula.json + task_context.json + analysis_plan.json` 运行，`loss_ir.yaml` 只是可选参考，不再是唯一入口。
+
+最常用入口：
 
 ```bash
 python scripts/ocean-loss-transfer/run_auto_experiment.py \
@@ -92,7 +94,27 @@ python scripts/ocean-loss-transfer/run_auto_experiment.py \
   --code_repo path/to/code
 ```
 
-结果: `sandbox/loss_transfer_experiments/{paper_slug}/summary.yaml`
+如果只想先构建上下文：
+
+```bash
+python scripts/ocean-loss-transfer/run_auto_experiment.py \
+  --paper_slug paper_name \
+  --code_repo path/to/code \
+  --mode context_only
+```
+
+默认输出目录：`sandbox/loss_transfer_experiments/{paper_slug}/`
+
+关键工件：
+
+- `task_context.json`
+- `loss_formula.json`
+- `analysis_plan.json`
+- `trajectory.jsonl`
+- `agent_loop_summary.json`
+- `attempt_{N}/candidate_loss.py`
+
+详细工作流见 [scripts/ocean-loss-transfer/README.md](./scripts/ocean-loss-transfer/README.md) 和 [workflow/loss_transfer/README.md](./workflow/loss_transfer/README.md)。
 
 ## API 接口
 
