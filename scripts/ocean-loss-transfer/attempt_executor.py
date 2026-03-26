@@ -15,8 +15,28 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from agent_artifact_generator import generate_candidate_loss, repair_candidate_loss
+from attempt_feedback import (
+    build_failure_feedback as _assemble_failure_feedback,
+    compute_baseline_delta as _compute_baseline_delta,
+    extract_primary_metric as _extract_primary_metric,
+    validation_error_text as _validation_error_text,
+)
+from attempt_state import (
+    attach_repair_artifact as _attach_repair_artifact,
+    build_attempt_result as _build_attempt_result,
+    build_code_generation_failure_result as _build_code_generation_failure_result,
+    build_initial_repair_record as _build_initial_repair_record,
+    mark_repair_reverted as _mark_repair_reverted,
+    should_revert_repair as _should_revert_repair,
+    snapshot_path as _snapshot_path,
+)
 from formula_code_generator import generate_formula_loss_code, supports_formula_codegen
 from formula_interface_analysis import analyze_formula_interface
+from runtime_routing import (
+    FULL_RUN_MODEL_CONFIGS,
+    build_runtime_routing_feedback,
+    probe_model_output_extension_support,
+)
 from trajectory_logger import (
     append_trajectory_event,
     ensure_experiment_dir,
@@ -24,8 +44,9 @@ from trajectory_logger import (
 )
 from validate_formula_alignment import validate_alignment
 from validate_loss import (
-    _FULL_RUN_MODEL_CONFIGS,
-    _supports_model_output_extension,
+    _PIPELINE_DIR,
+    _PYTHON,
+    _SANDBOX_DIR,
     validate_full_run,
     validate_single_model,
     validate_smoke,
@@ -154,78 +175,6 @@ def _resolve_attempt_code(
     raise ValueError(f'Unsupported attempt kind: {kind}')
 
 
-def _extract_primary_metric(metrics: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[float]]:
-    if not metrics:
-        return None, None
-
-    for key in ('swinir', 'val_ssim'):
-        value = metrics.get(key)
-        if isinstance(value, (int, float)):
-            return key, float(value)
-
-    return None, None
-
-
-def _compute_baseline_delta(
-    metrics: Optional[Dict[str, Any]],
-    baseline: Dict[str, Any],
-) -> Optional[float]:
-    _, value = _extract_primary_metric(metrics)
-    baseline_center = baseline.get('ssim_mean')
-    if value is None or not isinstance(baseline_center, (int, float)):
-        return None
-    return round(float(value) - float(baseline_center), 6)
-
-
-def _validation_error_text(stop_layer: Optional[str], validation: Dict[str, Any]) -> Optional[str]:
-    if not stop_layer:
-        return None
-
-    result = validation.get(stop_layer)
-    if not isinstance(result, dict):
-        return None
-
-    if stop_layer == 'formula_alignment':
-        errors = result.get('errors', [])
-        if isinstance(errors, list) and errors:
-            return '; '.join(str(item) for item in errors)
-
-    detail = result.get('detail')
-    if isinstance(detail, str) and detail:
-        return detail
-
-    error = result.get('error')
-    return str(error) if error is not None else None
-
-
-def _summarize_repair_rounds(repair_rounds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    summary: List[Dict[str, Any]] = []
-    for round_info in repair_rounds[-3:]:
-        repair = round_info.get('repair', {})
-        repair_payload = repair if isinstance(repair, dict) else {}
-        summary.append(
-            {
-                'round': round_info.get('round'),
-                'status': round_info.get('status'),
-                'trigger_stop_layer': round_info.get('trigger_stop_layer'),
-                'post_stop_layer': round_info.get('post_stop_layer'),
-                'post_error': round_info.get('post_error'),
-                'post_baseline_delta': round_info.get('post_baseline_delta'),
-                'reverted': bool(round_info.get('reverted', False)),
-                'agent_response_path': repair_payload.get('agent_response_path'),
-            }
-        )
-    return summary
-
-
-def _layer_rank(stop_layer: Optional[str]) -> int:
-    return _LAYER_ORDER.get(stop_layer, -1)
-
-
-def _snapshot_path(attempt_dir: Path, name: str, round_number: int, suffix: str) -> Path:
-    return attempt_dir / f'{name}_round_{round_number}{suffix}'
-
-
 def _build_failure_feedback(
     *,
     stop_layer: Optional[str],
@@ -236,60 +185,29 @@ def _build_failure_feedback(
     code_path: Path,
     formula_spec: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    feedback: Dict[str, Any] = {
-        'stop_layer': stop_layer,
-        'validation': validation,
-    }
-
-    error_text = _validation_error_text(stop_layer, validation)
-    if error_text:
-        feedback['error'] = error_text
-    if metrics:
-        feedback['metrics'] = metrics
-
-    if repair_rounds:
-        feedback['previous_repair_rounds'] = _summarize_repair_rounds(repair_rounds)
-
-    interface_analysis = analyze_formula_interface(formula_spec) if formula_spec else {}
-    if isinstance(interface_analysis, dict) and interface_analysis.get('requires_model_output_extension'):
-        override_dir = code_path.parent / 'sandbox_overrides'
-        support_by_model: Dict[str, bool] = {}
-        for model_name, config_name in _FULL_RUN_MODEL_CONFIGS.items():
-            support_by_model[model_name.lower()] = _supports_model_output_extension(
-                config_path=_PROJECT_ROOT / 'sandbox' / 'configs' / config_name,
-                sandbox_override_dir=str(override_dir) if override_dir.is_dir() else None,
-                formula_spec=formula_spec,
-            )
-        feedback['runtime_routing'] = {
-            'requires_model_output_extension': True,
-            'current_model_output_extension_support': support_by_model,
-            'policy': (
-                'Validators prefer copied-model output extension for models whose attempt-scoped '
-                'constructors support output_aux_loss_inputs. Models without that support remain on '
-                'sandbox_adapter fallback until the copied model path is upgraded.'
-            ),
-            'sandbox_override_dir': str(override_dir) if override_dir.is_dir() else None,
-        }
-
-    if stop_layer == 'layer4':
-        metric_name, metric_value = _extract_primary_metric(metrics)
-        viable_threshold = baseline.get('viable_threshold')
-        improvement_threshold = baseline.get('improvement_threshold')
-        feedback['performance_target'] = {
-            'primary_metric_name': metric_name or baseline.get('model') or 'swinir',
-            'current_value': metric_value,
-            'baseline_delta': _compute_baseline_delta(metrics, baseline),
-            'viable_threshold': float(viable_threshold) if isinstance(viable_threshold, (int, float)) else None,
-            'improvement_threshold': (
-                float(improvement_threshold) if isinstance(improvement_threshold, (int, float)) else None
-            ),
-            'goal': (
-                'Improve validation SSIM above the viable threshold while preserving formula '
-                'alignment, runtime stability, and trainability.'
-            ),
-        }
-
-    return feedback
+    override_dir = code_path.parent / 'sandbox_overrides'
+    runtime_routing = build_runtime_routing_feedback(
+        config_dir=_PROJECT_ROOT / 'sandbox' / 'configs',
+        sandbox_override_dir=str(override_dir) if override_dir.is_dir() else None,
+        formula_spec=formula_spec,
+        model_configs=FULL_RUN_MODEL_CONFIGS,
+        support_probe=lambda config_path: probe_model_output_extension_support(
+            config_path=config_path,
+            sandbox_override_dir=str(override_dir) if override_dir.is_dir() else None,
+            formula_spec=formula_spec,
+            python_executable=_PYTHON,
+            project_root=_PROJECT_ROOT,
+            pipeline_dir=_PIPELINE_DIR,
+        ),
+    )
+    return _assemble_failure_feedback(
+        stop_layer=stop_layer,
+        validation=validation,
+        metrics=metrics,
+        baseline=baseline,
+        repair_rounds=repair_rounds,
+        runtime_routing=runtime_routing,
+    )
 
 
 def _run_pretraining_validations(
@@ -499,38 +417,15 @@ def execute_attempt(
             agent_api_key=agent_api_key,
         )
     except Exception as exc:
-        result = {
-            'attempt_id': attempt_id,
-            'name': attempt_spec.get('name', f'attempt_{attempt_id}'),
-            'kind': str(attempt_spec.get('kind', 'agent_code')),
-            'status': 'failed',
-            'passed': False,
-            'run_training': bool(attempt_spec.get('run_training', True)),
-            'passed_static': False,
-            'passed_smoke': False,
-            'passed_formula_alignment': None,
-            'stop_layer': 'code_generation',
-            'error': str(exc),
-            'validation': {},
-            'metrics': {},
-            'baseline_delta': None,
-            'repair_rounds': [],
-            'reward_summary': {
-                'primary_metric_name': None,
-                'primary_metric': None,
-                'baseline_delta': None,
-            },
-            'paths': {
-                'attempt_dir': str(attempt_dir),
-                'code_path': str(code_path),
-                'result_path': str(attempt_dir / 'result.json'),
-            },
-            'metadata': {
-                'baseline': baseline,
-                'notes': attempt_spec.get('notes'),
-                'max_agent_repair_rounds': _MAX_AGENT_REPAIR_ROUNDS,
-            },
-        }
+        result = _build_code_generation_failure_result(
+            attempt_id=attempt_id,
+            attempt_spec=attempt_spec,
+            attempt_dir=attempt_dir,
+            code_path=code_path,
+            baseline=baseline,
+            max_agent_repair_rounds=_MAX_AGENT_REPAIR_ROUNDS,
+            error_text=str(exc),
+        )
         write_attempt_artifacts(
             experiment_dir,
             attempt_id,
@@ -608,15 +503,13 @@ def execute_attempt(
             agent_service_url=agent_service_url,
             agent_api_key=agent_api_key,
         )
-        repair_record: Dict[str, Any] = {
-            'round': round_number,
-            'trigger_stop_layer': stop_layer,
-            'failure_feedback': failure_feedback,
-            'repair': repair_info,
-            'artifacts': {
-                'pre_repair_code_path': str(pre_repair_code_path),
-            },
-        }
+        repair_record = _build_initial_repair_record(
+            round_number=round_number,
+            trigger_stop_layer=stop_layer,
+            failure_feedback=failure_feedback,
+            repair_info=repair_info,
+            pre_repair_code_path=pre_repair_code_path,
+        )
 
         if not repair_info:
             append_trajectory_event(
@@ -643,7 +536,11 @@ def execute_attempt(
                     '.json',
                 )
                 shutil.copy2(response_source, response_snapshot_path)
-                repair_record['artifacts']['repair_response_path'] = str(response_snapshot_path)
+                _attach_repair_artifact(
+                    repair_record,
+                    key='repair_response_path',
+                    path=response_snapshot_path,
+                )
 
         post_repair_code_path = _snapshot_path(
             attempt_dir,
@@ -652,7 +549,11 @@ def execute_attempt(
             '.py',
         )
         shutil.copy2(code_path, post_repair_code_path)
-        repair_record['artifacts']['post_repair_code_path'] = str(post_repair_code_path)
+        _attach_repair_artifact(
+            repair_record,
+            key='post_repair_code_path',
+            path=post_repair_code_path,
+        )
 
         if repair_info.get('status') != 'success':
             repair_record['status'] = 'error'
@@ -687,7 +588,11 @@ def execute_attempt(
                 'post_baseline_delta': _compute_baseline_delta(metrics, baseline),
             }
         )
-        if _layer_rank(stop_layer) < _layer_rank(repair_record['trigger_stop_layer']):
+        if _should_revert_repair(
+            trigger_stop_layer=repair_record['trigger_stop_layer'],
+            post_stop_layer=stop_layer,
+            layer_order=_LAYER_ORDER,
+        ):
             shutil.copy2(pre_repair_code_path, code_path)
             restored_code_path = _snapshot_path(
                 attempt_dir,
@@ -696,17 +601,10 @@ def execute_attempt(
                 '.py',
             )
             shutil.copy2(code_path, restored_code_path)
-            repair_record.update(
-                {
-                    'status': 'reverted_regression',
-                    'reverted': True,
-                    'reversion_reason': (
-                        f'Repair regressed validation from {repair_record["trigger_stop_layer"]} '
-                        f'to {stop_layer}; restored previous candidate.'
-                    ),
-                }
+            _mark_repair_reverted(
+                repair_record,
+                restored_code_path=restored_code_path,
             )
-            repair_record['artifacts']['restored_code_path'] = str(restored_code_path)
             repair_rounds.append(repair_record)
             append_trajectory_event(
                 paper_slug,
@@ -740,52 +638,26 @@ def execute_attempt(
             output_dir=output_dir,
         )
 
-    passed_static = bool(validation.get('layer1', {}).get('passed', stop_layer != 'layer1'))
-    passed_smoke = bool(validation.get('layer2', {}).get('passed', stop_layer not in ('layer1', 'layer2')))
-    passed_formula_alignment = None
-    if formula_spec_path:
-        passed_formula_alignment = bool(
-            validation.get('formula_alignment', {}).get('passed', stop_layer != 'formula_alignment')
-        )
-
-    passed = stop_layer is None
-    baseline_delta = _compute_baseline_delta(metrics, baseline)
-    metric_name, metric_value = _extract_primary_metric(metrics)
-
-    result: Dict[str, Any] = {
-        'attempt_id': attempt_id,
-        'name': attempt_spec.get('name', f'attempt_{attempt_id}'),
-        'kind': source_kind,
-        'status': 'passed' if passed else 'failed',
-        'passed': passed,
-        'run_training': run_training,
-        'passed_static': passed_static,
-        'passed_smoke': passed_smoke,
-        'passed_formula_alignment': passed_formula_alignment,
-        'stop_layer': stop_layer,
-        'error': _validation_error_text(stop_layer, validation),
-        'validation': validation,
-        'metrics': metrics,
-        'baseline_delta': baseline_delta,
-        'repair_rounds': repair_rounds,
-        'reward_summary': {
-            'primary_metric_name': metric_name,
-            'primary_metric': metric_value,
-            'baseline_delta': baseline_delta,
-        },
-        'paths': {
-            'attempt_dir': str(attempt_dir),
-            'code_path': str(code_path),
-            'result_path': str(attempt_dir / 'result.json'),
-        },
-        'metadata': {
-            'baseline': baseline,
-            'notes': attempt_spec.get('notes'),
-            'agent_generation': generation_info,
-            'agent_repair': repair_info,
-            'max_agent_repair_rounds': _MAX_AGENT_REPAIR_ROUNDS,
-        },
-    }
+    result = _build_attempt_result(
+        attempt_id=attempt_id,
+        attempt_spec=attempt_spec,
+        source_kind=source_kind,
+        attempt_dir=attempt_dir,
+        code_path=code_path,
+        validation=validation,
+        stop_layer=stop_layer,
+        metrics=metrics,
+        baseline=baseline,
+        repair_rounds=repair_rounds,
+        run_training=run_training,
+        formula_spec_path=formula_spec_path,
+        generation_info=generation_info,
+        repair_info=repair_info,
+        max_agent_repair_rounds=_MAX_AGENT_REPAIR_ROUNDS,
+        validation_error_text_fn=_validation_error_text,
+        compute_baseline_delta_fn=_compute_baseline_delta,
+        extract_primary_metric_fn=_extract_primary_metric,
+    )
 
     write_attempt_artifacts(
         experiment_dir,

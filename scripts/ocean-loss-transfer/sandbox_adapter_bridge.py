@@ -17,6 +17,7 @@ import numpy as np
 import yaml
 
 from formula_interface_analysis import analyze_formula_interface
+from runtime_routing import formula_requires_model_output_extension, formula_requires_sandbox_adapter
 
 
 def _infer_dataset_metadata(dataset_root: str) -> Dict[str, Any]:
@@ -81,19 +82,11 @@ def load_formula_spec(formula_spec_path: Optional[str]) -> Optional[Dict[str, An
 
 
 def requires_sandbox_adapter(formula_spec: Optional[Dict[str, Any]]) -> bool:
-    if not formula_spec:
-        return False
-    analysis = analyze_formula_interface(formula_spec)
-    if analysis.get("requires_model_output_extension", False):
-        return False
-    return bool(analysis.get("extra_required_variables"))
+    return formula_requires_sandbox_adapter(formula_spec)
 
 
 def requires_model_output_extension(formula_spec: Optional[Dict[str, Any]]) -> bool:
-    if not formula_spec:
-        return False
-    analysis = analyze_formula_interface(formula_spec)
-    return bool(analysis.get("requires_model_output_extension", False))
+    return formula_requires_model_output_extension(formula_spec)
 
 
 def infer_adapter_head_template(variable_name: str) -> Dict[str, Any]:

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from formula_code_generator import supports_formula_codegen
+from integration_policy import merge_attempt_with_edit_policy, resolve_recommended_integration_path
 from trajectory_logger import append_trajectory_event, ensure_experiment_dir, write_json
 from validate_analysis_plan import validate_analysis_plan
 
@@ -35,97 +36,6 @@ def _load_analysis_plan(path: str) -> Dict[str, Any]:
     return normalized
 
 
-def _normalize_string_list(value: Any) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if isinstance(item, str) and str(item).strip()]
-
-
-def _get_recommended_integration_path(
-    task_context: Dict[str, Any],
-    analysis_plan: Optional[Dict[str, Any]] = None,
-) -> str:
-    if isinstance(analysis_plan, dict):
-        integration_decision = analysis_plan.get('integration_decision')
-        if isinstance(integration_decision, dict):
-            path = integration_decision.get('path')
-            if isinstance(path, str) and path.strip():
-                return path.strip()
-
-    integration_assessment = (
-        task_context.get('integration_assessment', {})
-        if isinstance(task_context.get('integration_assessment'), dict)
-        else {}
-    )
-    path = integration_assessment.get('recommended_path')
-    if isinstance(path, str) and path.strip():
-        return path.strip()
-    return 'agent_decides'
-
-
-def _default_attempt_edit_policy(integration_path: str) -> Dict[str, List[str]]:
-    normalized = integration_path.strip().lower()
-    if normalized == 'loss_only':
-        return {
-            'files_to_edit': ['candidate_loss.py'],
-            'required_edit_paths': [],
-        }
-    if normalized == 'adapter_wrapper':
-        return {
-            'files_to_edit': [
-                'candidate_loss.py',
-                'sandbox model adapter files exposing extra loss inputs',
-                'sandbox trainer files',
-            ],
-            'required_edit_paths': ['sandbox_model_adapter.py'],
-        }
-    if normalized == 'extend_model_outputs':
-        return {
-            'files_to_edit': [
-                'candidate_loss.py',
-                'sandbox model adapter files exposing extra loss inputs',
-                'sandbox trainer files',
-                'models',
-            ],
-            'required_edit_paths': ['models'],
-        }
-    if normalized == 'model_surgery':
-        return {
-            'files_to_edit': [
-                'candidate_loss.py',
-                'sandbox trainer files',
-                'models',
-            ],
-            'required_edit_paths': ['models'],
-        }
-    return {
-        'files_to_edit': ['candidate_loss.py'],
-        'required_edit_paths': [],
-    }
-
-
-def _augment_attempt_spec(
-    attempt: Dict[str, Any],
-    *,
-    integration_path: str,
-) -> Dict[str, Any]:
-    normalized = dict(attempt)
-    policy = _default_attempt_edit_policy(integration_path)
-
-    existing_files = _normalize_string_list(normalized.get('files_to_edit'))
-    merged_files = list(existing_files)
-    for item in policy['files_to_edit']:
-        if item not in merged_files:
-            merged_files.append(item)
-    normalized['files_to_edit'] = merged_files
-
-    existing_required = _normalize_string_list(normalized.get('required_edit_paths'))
-    normalized['required_edit_paths'] = (
-        existing_required if existing_required else list(policy['required_edit_paths'])
-    )
-    return normalized
-
-
 def _normalize_attempts(
     raw_attempts: Any,
     *,
@@ -135,7 +45,7 @@ def _normalize_attempts(
     if not isinstance(raw_attempts, list):
         return []
 
-    integration_path = _get_recommended_integration_path(task_context, analysis_plan)
+    integration_path = resolve_recommended_integration_path(task_context, analysis_plan)
     attempts: List[Dict[str, Any]] = []
     for idx, item in enumerate(raw_attempts, start=1):
         if not isinstance(item, dict):
@@ -144,18 +54,13 @@ def _normalize_attempts(
         normalized.setdefault('name', f'Attempt {idx}')
         normalized.setdefault('kind', 'agent_code')
         normalized.setdefault('run_training', True)
-        attempts.append(
-            _augment_attempt_spec(
-                normalized,
-                integration_path=integration_path,
-            )
-        )
+        attempts.append(merge_attempt_with_edit_policy(normalized, integration_path=integration_path))
     return attempts
 
 
 def _build_bootstrap_attempts(task_context: Dict[str, Any], max_attempts: int) -> List[Dict[str, Any]]:
     formula_spec = task_context.get('formula_spec')
-    integration_path = _get_recommended_integration_path(task_context)
+    integration_path = resolve_recommended_integration_path(task_context)
     if integration_path == 'loss_only' and isinstance(formula_spec, dict) and supports_formula_codegen(formula_spec):
         attempts = [
             {
@@ -174,7 +79,7 @@ def _build_bootstrap_attempts(task_context: Dict[str, Any], max_attempts: int) -
             },
         ]
         return [
-            _augment_attempt_spec(attempt, integration_path=integration_path)
+            merge_attempt_with_edit_policy(attempt, integration_path=integration_path)
             for attempt in attempts[:max_attempts]
         ]
 
@@ -205,7 +110,7 @@ def _build_bootstrap_attempts(task_context: Dict[str, Any], max_attempts: int) -
         },
     ]
     return [
-        _augment_attempt_spec(attempt, integration_path=integration_path)
+        merge_attempt_with_edit_policy(attempt, integration_path=integration_path)
         for attempt in attempts[:max_attempts]
     ]
 

@@ -30,14 +30,17 @@ import re
 import traceback
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 sys.path.append(str(Path(__file__).parent.parent))  # 添加上层目录（scripts）到路径，以便导入 python_manager
 from python_manager import find_first_python_path, find_python_with_module
+from runtime_routing import (
+    FULL_RUN_MODEL_CONFIGS,
+    needs_temporary_runtime_config,
+    probe_model_output_extension_support,
+)
 from sandbox_adapter_bridge import (
     build_smoke_loss_kwargs,
     load_formula_spec,
-    requires_sandbox_adapter,
-    requires_model_output_extension,
     write_config_with_adapter,
 )
 from _types import (
@@ -61,12 +64,6 @@ _BUILTINS = set(__builtins__.keys()) if isinstance(__builtins__, dict) else set(
 _SANDBOX_DIR = Path(__file__).parent.parent.parent / 'sandbox'
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 _PIPELINE_DIR = _PROJECT_ROOT / 'scripts' / 'ocean-SR-training-masked'
-_FULL_RUN_MODEL_CONFIGS = {
-    'SwinIR': 'swinir.yaml',
-    'EDSR': 'edsr.yaml',
-    'FNO2d': 'fno2d.yaml',
-    'UNet2d': 'unet2d.yaml',
-}
 
 
 def _copy_loss_to_sandbox(loss_file_path: str) -> None:
@@ -212,21 +209,20 @@ def _prepare_config_path(
     sandbox_override_dir: Optional[str] = None,
 ) -> str:
     base_config_path = _SANDBOX_DIR / 'configs' / config_name
-    needs_temp_config = (
-        requires_sandbox_adapter(formula_spec)
-        or requires_model_output_extension(formula_spec)
-        or bool(dataset_root)
-    )
+    needs_temp_config = needs_temporary_runtime_config(formula_spec, dataset_root=dataset_root)
     if not needs_temp_config:
         return str(base_config_path)
     if not temp_dir:
         raise ValueError('temp_dir is required when a temporary sandbox config must be synthesized')
 
     output_path = Path(temp_dir) / config_name
-    prefer_model_output_extension = _supports_model_output_extension(
+    prefer_model_output_extension = probe_model_output_extension_support(
         config_path=base_config_path,
         sandbox_override_dir=sandbox_override_dir,
         formula_spec=formula_spec,
+        python_executable=_PYTHON,
+        project_root=_PROJECT_ROOT,
+        pipeline_dir=_PIPELINE_DIR,
     )
     write_config_with_adapter(
         str(base_config_path),
@@ -236,83 +232,6 @@ def _prepare_config_path(
         prefer_model_output_extension=prefer_model_output_extension,
     )
     return str(output_path)
-
-
-def _supports_model_output_extension(
-    *,
-    config_path: Path,
-    sandbox_override_dir: Optional[str],
-    formula_spec: Optional[Dict[str, object]],
-) -> bool:
-    if not requires_model_output_extension(formula_spec):
-        return False
-    if not sandbox_override_dir:
-        return False
-    if not Path(sandbox_override_dir).is_dir():
-        return False
-
-    try:
-        base_config = yaml.safe_load(config_path.read_text(encoding='utf-8'))
-    except OSError:
-        return False
-    if not isinstance(base_config, dict):
-        return False
-
-    model_cfg = base_config.get('model', {})
-    if not isinstance(model_cfg, dict):
-        return False
-    model_name = model_cfg.get('name')
-    if not isinstance(model_name, str) or not model_name.strip():
-        return False
-
-    probe_code = (
-        'import inspect, json, os, sys\n'
-        'project_root = os.path.abspath(sys.argv[1])\n'
-        'override_dir = os.path.abspath(sys.argv[2])\n'
-        'model_name = sys.argv[3]\n'
-        "pipeline_dir = os.path.join(project_root, 'scripts', 'ocean-SR-training-masked')\n"
-        "sandbox_dir = os.path.join(project_root, 'sandbox')\n"
-        'if pipeline_dir not in sys.path:\n'
-        '    sys.path.insert(0, pipeline_dir)\n'
-        'if sandbox_dir not in sys.path:\n'
-        '    sys.path.insert(0, sandbox_dir)\n'
-        'sys.path.insert(0, override_dir)\n'
-        'from models import _model_dict\n'
-        'factory = _model_dict.get(model_name)\n'
-        'supports = False\n'
-        'resolved_file = ""\n'
-        'if callable(factory):\n'
-        '    module = inspect.getmodule(factory)\n'
-        "    resolved_file = getattr(module, '__file__', '') or ''\n"
-        '    try:\n'
-        '        params = inspect.signature(factory).parameters.values()\n'
-        "        supports = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params) or 'output_aux_loss_inputs' in inspect.signature(factory).parameters\n"
-        '    except (TypeError, ValueError):\n'
-        '        supports = False\n'
-        'print(json.dumps({"supports": supports, "resolved_file": resolved_file}))\n'
-    )
-
-    try:
-        result = subprocess.run(
-            [_PYTHON, '-c', probe_code, str(_PROJECT_ROOT), str(Path(sandbox_override_dir).resolve()), model_name],
-            cwd=_PROJECT_ROOT,
-            env=_build_run_env(extra_env={'SANDBOX_OVERRIDE_DIR': str(Path(sandbox_override_dir).resolve())}),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except subprocess.TimeoutExpired:
-        return False
-
-    if result.returncode != 0:
-        return False
-
-    try:
-        payload = json.loads((result.stdout or '').strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError):
-        return False
-
-    return bool(payload.get('supports'))
 
 
 def _collect_valid_epochs(training_curve: Dict[str, object]) -> List[Dict[str, object]]:
@@ -1009,7 +928,7 @@ def validate_full_run(
     if sandbox_override_dir:
         extra_env['SANDBOX_OVERRIDE_DIR'] = sandbox_override_dir
     with tempfile.TemporaryDirectory(prefix='sandbox_full_') as temp_dir:
-        if requires_sandbox_adapter(formula_spec) or dataset_root:
+        if needs_temporary_runtime_config(formula_spec, dataset_root=dataset_root):
             for config_name in _FULL_RUN_MODEL_CONFIGS.values():
                 _prepare_config_path(
                     config_name,

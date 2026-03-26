@@ -7,45 +7,24 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from agent_edit_workspace import (
+    check_required_edit_paths as _check_required_edit_paths,
+    detect_touched_paths as _detect_touched_paths,
+    format_editable_targets as _format_editable_targets,
+    load_existing_touched_paths as _load_existing_touched_paths,
+    normalize_required_edit_paths as _normalize_required_edit_paths,
+    prepare_attempt_edit_workspace as _prepare_attempt_edit_workspace,
+    snapshot_editable_targets as _snapshot_editable_targets,
+)
 from agent_service_client import run_agent_chat
 from validate_analysis_plan import validate_analysis_plan
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_SANDBOX_ROOT = _PROJECT_ROOT / 'sandbox'
-_PIPELINE_ROOT = _PROJECT_ROOT / 'scripts' / 'ocean-SR-training-masked'
-_OVERRIDE_FILE_SOURCES = {
-    'sandbox_model_adapter.py': _SANDBOX_ROOT / 'sandbox_model_adapter.py',
-    'sandbox_trainer.py': _SANDBOX_ROOT / 'sandbox_trainer.py',
-    '_run_once.py': _SANDBOX_ROOT / '_run_once.py',
-}
-_OVERRIDE_TREE_SOURCES = {
-    'models': _PIPELINE_ROOT / 'models',
-}
-_OVERRIDE_FILE_ALIASES = {
-    'sandbox model adapter files exposing extra loss inputs': ['sandbox_model_adapter.py'],
-    'sandbox adapter/model-output layer': ['sandbox_model_adapter.py', 'sandbox_trainer.py'],
-    'sandbox trainer files': ['sandbox_trainer.py'],
-    'sandbox runtime entrypoint': ['_run_once.py'],
-    'sandbox/sandbox_model_adapter.py': ['sandbox_model_adapter.py'],
-    'sandbox/sandbox_trainer.py': ['sandbox_trainer.py'],
-    'sandbox/_run_once.py': ['_run_once.py'],
-}
-_OVERRIDE_TREE_ALIASES = {
-    'model files': ['models'],
-    'copied model files': ['models'],
-    'sandbox copied model files': ['models'],
-    'training model files': ['models'],
-    'scripts/ocean-sr-training-masked/models': ['models'],
-    'scripts/ocean-SR-training-masked/models': ['models'],
-    'models': ['models'],
-}
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -67,267 +46,6 @@ def _resolve_working_dir(task_context: Dict[str, Any]) -> Path:
         if repo_path.exists():
             return _PROJECT_ROOT if _PROJECT_ROOT in repo_path.parents or repo_path == _PROJECT_ROOT else repo_path.parent
     return _PROJECT_ROOT
-
-
-def _as_string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if isinstance(item, str) and str(item).strip()]
-
-
-def _resolve_requested_override_files(
-    task_context: Dict[str, Any],
-    attempt_spec: Dict[str, Any],
-) -> Dict[str, list[str]]:
-    resolved_files: list[str] = []
-    resolved_trees: list[str] = []
-    requested = _as_string_list(attempt_spec.get('files_to_edit'))
-
-    for item in requested:
-        normalized = item.strip()
-        if normalized == 'candidate_loss.py':
-            continue
-        alias_matches = _OVERRIDE_FILE_ALIASES.get(normalized.lower())
-        if alias_matches:
-            for name in alias_matches:
-                if name not in resolved_files:
-                    resolved_files.append(name)
-            continue
-        tree_alias_matches = _OVERRIDE_TREE_ALIASES.get(normalized.lower())
-        if tree_alias_matches:
-            for name in tree_alias_matches:
-                if name not in resolved_trees:
-                    resolved_trees.append(name)
-            continue
-        candidate_name = Path(normalized).name
-        if candidate_name in _OVERRIDE_FILE_SOURCES and candidate_name not in resolved_files:
-            resolved_files.append(candidate_name)
-        if candidate_name in _OVERRIDE_TREE_SOURCES and candidate_name not in resolved_trees:
-            resolved_trees.append(candidate_name)
-
-    integration = task_context.get('integration_assessment', {}) if isinstance(task_context.get('integration_assessment'), dict) else {}
-    recommended_path = str(integration.get('recommended_path', '')).strip().lower()
-    if recommended_path in {'adapter_wrapper', 'extend_model_outputs'} and 'sandbox_model_adapter.py' not in resolved_files:
-        resolved_files.append('sandbox_model_adapter.py')
-    if recommended_path in {'adapter_wrapper', 'extend_model_outputs'} and 'sandbox_trainer.py' not in resolved_files:
-        resolved_files.append('sandbox_trainer.py')
-    if recommended_path in {'extend_model_outputs', 'model_surgery'} and 'models' not in resolved_trees:
-        resolved_trees.append('models')
-    if recommended_path == 'model_surgery' and 'models' not in resolved_trees:
-        resolved_trees.append('models')
-
-    return {
-        'files': resolved_files,
-        'trees': resolved_trees,
-    }
-
-
-def _prepare_attempt_edit_workspace(
-    *,
-    task_context: Dict[str, Any],
-    attempt_spec: Dict[str, Any],
-    output_code_path: Path,
-) -> Dict[str, Any]:
-    attempt_dir = output_code_path.parent
-    attempt_dir.mkdir(parents=True, exist_ok=True)
-    if not output_code_path.exists():
-        output_code_path.write_text(
-            '# Agent will replace this placeholder with the attempt-specific candidate loss.\n',
-            encoding='utf-8',
-        )
-    override_dir = attempt_dir / 'sandbox_overrides'
-    integration = task_context.get('integration_assessment', {}) if isinstance(task_context.get('integration_assessment'), dict) else {}
-    recommended_path = str(integration.get('recommended_path', 'agent_decides')).strip().lower()
-    editable_targets = [
-        {
-            'path': str(output_code_path),
-            'kind': 'candidate_loss',
-            'description': 'Primary sandbox loss entrypoint for this attempt.',
-        }
-    ]
-
-    override_targets = _resolve_requested_override_files(task_context, attempt_spec)
-    override_files = override_targets['files']
-    override_trees = override_targets['trees']
-    if override_files:
-        override_dir.mkdir(parents=True, exist_ok=True)
-    if override_trees:
-        override_dir.mkdir(parents=True, exist_ok=True)
-
-    for file_name in override_files:
-        source_path = _OVERRIDE_FILE_SOURCES[file_name]
-        target_path = override_dir / file_name
-        if not target_path.exists():
-            shutil.copy2(source_path, target_path)
-        editable_targets.append(
-            {
-                'path': str(target_path),
-                'kind': 'sandbox_override',
-                'source_path': str(source_path),
-                'description': (
-                    'Attempt-scoped sandbox override. Validators load this file via '
-                    'SANDBOX_OVERRIDE_DIR instead of editing repo-root sandbox modules.'
-                ),
-            }
-        )
-
-    for tree_name in override_trees:
-        source_dir = _OVERRIDE_TREE_SOURCES[tree_name]
-        target_dir = override_dir / tree_name
-        if not target_dir.exists():
-            shutil.copytree(source_dir, target_dir)
-        editable_targets.append(
-            {
-                'path': str(target_dir),
-                'kind': 'sandbox_override_tree',
-                'source_path': str(source_dir),
-                'description': (
-                    'Attempt-scoped copy of the original training model package. '
-                    'Edit files under this directory only when model-level changes are required.'
-                ),
-            }
-        )
-
-    manifest = {
-        'candidate_loss_path': str(output_code_path),
-        'sandbox_override_dir': str(override_dir) if (override_files or override_trees) else None,
-        'routing_policy': {
-            'recommended_path': recommended_path,
-            'requires_model_changes': bool(integration.get('requires_model_changes')),
-            'validator_behavior': (
-                'For formulas that need model-provided loss inputs, validators prefer '
-                'attempt-scoped model-output extension when the copied model constructor '
-                'supports output_aux_loss_inputs; otherwise they fall back to sandbox_adapter heads.'
-            ),
-        },
-        'editable_targets': editable_targets,
-        'notes': [
-            'Edit only the files listed here.',
-            'Do not modify repo-root sandbox/, training/, or data-processing files during loss transfer attempts.',
-            'If sandbox_override_dir is present, validators will load same-named Python modules from it first.',
-            'Directory targets mean the whole copied tree is editable, but only inside that attempt-scoped copy.',
-            'If recommended_path is extend_model_outputs or model_surgery, prefer editing the copied models/ tree instead of forcing a loss-only hack.',
-        ],
-    }
-    manifest_path = attempt_dir / 'editable_files.json'
-    _write_json(manifest_path, manifest)
-    return {
-        'manifest_path': manifest_path,
-        'editable_targets': editable_targets,
-        'sandbox_override_dir': override_dir if (override_files or override_trees) else None,
-    }
-
-
-def _format_editable_targets(editable_targets: list[Dict[str, Any]]) -> str:
-    lines = []
-    for item in editable_targets:
-        path = item.get('path')
-        description = item.get('description')
-        if isinstance(path, str):
-            if isinstance(description, str) and description:
-                lines.append(f'- {path}  # {description}')
-            else:
-                lines.append(f'- {path}')
-    return '\n'.join(lines)
-
-
-def _normalize_required_edit_paths(attempt_spec: Dict[str, Any]) -> list[str]:
-    return _as_string_list(attempt_spec.get('required_edit_paths'))
-
-
-def _path_digest(path: Path) -> str:
-    hasher = hashlib.sha256()
-    if not path.exists():
-        hasher.update(b'missing')
-        return hasher.hexdigest()
-
-    if path.is_file():
-        hasher.update(b'file')
-        hasher.update(path.read_bytes())
-        return hasher.hexdigest()
-
-    hasher.update(b'dir')
-    for child in sorted(p for p in path.rglob('*') if p.is_file()):
-        hasher.update(str(child.relative_to(path)).encode('utf-8'))
-        hasher.update(child.read_bytes())
-    return hasher.hexdigest()
-
-
-def _snapshot_editable_targets(editable_targets: list[Dict[str, Any]]) -> Dict[str, str]:
-    snapshot: Dict[str, str] = {}
-    for item in editable_targets:
-        path = item.get('path')
-        if isinstance(path, str) and path.strip():
-            snapshot[path] = _path_digest(Path(path))
-    return snapshot
-
-
-def _detect_touched_paths(
-    before_snapshot: Dict[str, str],
-    after_snapshot: Dict[str, str],
-) -> list[str]:
-    touched: list[str] = []
-    for path, before_digest in before_snapshot.items():
-        after_digest = after_snapshot.get(path)
-        if after_digest is None or after_digest != before_digest:
-            touched.append(path)
-    return touched
-
-
-def _load_existing_touched_paths(attempt_dir: Path) -> list[str]:
-    touched: list[str] = []
-    for log_name in ('agent_code_generation_response.json', 'agent_code_repair_response.json'):
-        log_path = attempt_dir / log_name
-        if not log_path.exists():
-            continue
-        try:
-            payload = _load_json(log_path)
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        logged_paths = payload.get('touched_paths') if isinstance(payload, dict) else None
-        if not isinstance(logged_paths, list):
-            continue
-        for path in logged_paths:
-            if isinstance(path, str) and path.strip() and path not in touched:
-                touched.append(path)
-    return touched
-
-
-def _path_matches_requirement(path: str, requirement: str) -> bool:
-    normalized_req = requirement.strip().rstrip('/').lower()
-    candidate = path.strip().rstrip('/').lower()
-    if not normalized_req or not candidate:
-        return False
-    if normalized_req in candidate:
-        return True
-    return Path(candidate).name == Path(normalized_req).name
-
-
-def _check_required_edit_paths(
-    *,
-    required_edit_paths: list[str],
-    touched_paths: list[str],
-) -> Optional[Dict[str, Any]]:
-    if not required_edit_paths:
-        return None
-
-    unmet = [
-        requirement
-        for requirement in required_edit_paths
-        if not any(_path_matches_requirement(path, requirement) for path in touched_paths)
-    ]
-    if unmet:
-        return {
-            'status': 'error',
-            'error': 'required_edit_paths_not_modified',
-            'detail': (
-                'Agent did not modify the required attempt-scoped paths: '
-                + ', '.join(unmet)
-            ),
-            'touched_paths': touched_paths,
-            'required_edit_paths': required_edit_paths,
-        }
-    return None
 
 
 def _build_analysis_plan_prompt(
@@ -565,31 +283,11 @@ def generate_analysis_plan(
     return result
 
 
-def generate_candidate_loss(
+def _resolve_candidate_support_paths(
     *,
-    task_context_path: str,
-    attempt_spec: Dict[str, Any],
-    output_code_path: str,
-    analysis_plan_path: Optional[str] = None,
-    service_url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    timeout_sec: int = 900,
-) -> Dict[str, Any]:
-    task_context_file = Path(task_context_path).expanduser().resolve()
-    output_path = Path(output_code_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    task_context = _load_json(task_context_file)
-    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
-    experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
-    working_dir = _resolve_working_dir(task_context)
-    notebook_path = output_path.parent / 'candidate_loss_agent.ipynb'
-    edit_workspace = _prepare_attempt_edit_workspace(
-        task_context=task_context,
-        attempt_spec=attempt_spec,
-        output_code_path=output_path,
-    )
-    before_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
+    paths: Dict[str, Any],
+    analysis_plan_path: Optional[str],
+) -> Dict[str, Optional[Path]]:
     resolved_loss_formula = (
         Path(str(paths.get('loss_formula_path'))).expanduser().resolve()
         if paths.get('loss_formula_path')
@@ -600,46 +298,110 @@ def generate_candidate_loss(
         if analysis_plan_path
         else None
     )
+    return {
+        'loss_formula_path': resolved_loss_formula,
+        'analysis_plan_path': resolved_analysis_plan,
+    }
 
-    response = run_agent_chat(
-        message=_build_candidate_loss_prompt(
-            task_context_path=task_context_file,
-            analysis_plan_path=resolved_analysis_plan,
-            loss_formula_path=resolved_loss_formula,
-            editable_manifest_path=Path(edit_workspace['manifest_path']),
-            editable_targets=edit_workspace['editable_targets'],
-            output_code_path=output_path,
-            attempt_spec=attempt_spec,
-        ),
-        mode='edit',
-        working_dir=str(working_dir),
-        outputs_path=str(experiment_dir),
-        notebook_path=str(notebook_path),
-        files=[
-            str(task_context_file),
-            str(edit_workspace['manifest_path']),
-            *([str(resolved_loss_formula)] if resolved_loss_formula else []),
-            *([str(resolved_analysis_plan)] if resolved_analysis_plan else []),
-            *[
-                str(item['path'])
-                for item in edit_workspace['editable_targets']
-                if isinstance(item, dict)
-                and isinstance(item.get('path'), str)
-                and Path(str(item['path'])).is_file()
-            ],
-        ],
-        service_url=service_url,
-        api_key=api_key,
-        timeout_sec=timeout_sec,
+
+def _build_agent_edit_input_files(
+    *,
+    task_context_file: Path,
+    editable_manifest_path: Path,
+    editable_targets: list[Dict[str, Any]],
+    resolved_loss_formula: Optional[Path],
+    resolved_analysis_plan: Optional[Path],
+    current_code_path: Optional[Path] = None,
+) -> list[str]:
+    files = [
+        str(task_context_file),
+        str(editable_manifest_path),
+    ]
+    if current_code_path is not None:
+        files.append(str(current_code_path))
+    if resolved_loss_formula is not None:
+        files.append(str(resolved_loss_formula))
+    if resolved_analysis_plan is not None:
+        files.append(str(resolved_analysis_plan))
+    files.extend(
+        str(item['path'])
+        for item in editable_targets
+        if isinstance(item, dict)
+        and isinstance(item.get('path'), str)
+        and Path(str(item['path'])).is_file()
     )
+    return files
 
-    log_path = output_path.parent / 'agent_code_generation_response.json'
-    _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
 
+def _prepare_candidate_edit_context(
+    *,
+    task_context_path: str,
+    attempt_spec: Dict[str, Any],
+    output_code_path: str,
+    analysis_plan_path: Optional[str],
+    notebook_name: str,
+) -> Dict[str, Any]:
+    task_context_file = Path(task_context_path).expanduser().resolve()
+    output_path = Path(output_code_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    task_context = _load_json(task_context_file)
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
+    working_dir = _resolve_working_dir(task_context)
+    notebook_path = output_path.parent / notebook_name
+    edit_workspace = _prepare_attempt_edit_workspace(
+        task_context=task_context,
+        attempt_spec=attempt_spec,
+        output_code_path=output_path,
+    )
+    before_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
+    support_paths = _resolve_candidate_support_paths(
+        paths=paths,
+        analysis_plan_path=analysis_plan_path,
+    )
+    return {
+        'task_context_file': task_context_file,
+        'task_context': task_context,
+        'paths': paths,
+        'output_path': output_path,
+        'experiment_dir': experiment_dir,
+        'working_dir': working_dir,
+        'notebook_path': notebook_path,
+        'edit_workspace': edit_workspace,
+        'before_snapshot': before_snapshot,
+        'resolved_loss_formula': support_paths['loss_formula_path'],
+        'resolved_analysis_plan': support_paths['analysis_plan_path'],
+    }
+
+
+def _build_edit_workspace_result_fields(edit_workspace: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    return {
+        'editable_manifest_path': str(edit_workspace['manifest_path']),
+        'sandbox_override_dir': (
+            str(edit_workspace['sandbox_override_dir'])
+            if edit_workspace.get('sandbox_override_dir') is not None
+            else None
+        ),
+    }
+
+
+def _finalize_candidate_edit_result(
+    *,
+    output_path: Path,
+    response: Dict[str, Any],
+    log_path: Path,
+    edit_workspace: Dict[str, Any],
+    before_snapshot: Dict[str, str],
+    attempt_spec: Dict[str, Any],
+    missing_output_error: str,
+    failure_feedback: Optional[Dict[str, Any]] = None,
+    include_history: bool = False,
+) -> Dict[str, Any]:
     if not output_path.exists():
         return {
             'status': 'error',
-            'error': response.get('error') or f'Agent finished but did not write candidate code to {output_path}',
+            'error': response.get('error') or missing_output_error,
             'code_path': str(output_path),
             'agent_response_path': str(log_path),
             'agent_text': response.get('text', ''),
@@ -648,26 +410,43 @@ def generate_candidate_loss(
     code = output_path.read_text(encoding='utf-8')
     after_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
     touched_paths = _detect_touched_paths(before_snapshot, after_snapshot)
-    required_edit_error = _check_required_edit_paths(
-        required_edit_paths=_normalize_required_edit_paths(attempt_spec),
-        touched_paths=touched_paths,
+    historical_touched_paths = _load_existing_touched_paths(output_path.parent) if include_history else []
+    effective_touched_paths = (
+        list(dict.fromkeys([*historical_touched_paths, *touched_paths]))
+        if include_history
+        else touched_paths
     )
+    required_edit_paths = _normalize_required_edit_paths(attempt_spec)
+    required_edit_error = _check_required_edit_paths(
+        required_edit_paths=required_edit_paths,
+        touched_paths=effective_touched_paths,
+    )
+    log_payload: Dict[str, Any] = {
+        **response,
+        'code_chars': len(code),
+        'touched_paths': touched_paths,
+    }
+    if include_history:
+        log_payload['historical_touched_paths'] = historical_touched_paths
+    if failure_feedback is not None:
+        log_payload['failure_feedback'] = failure_feedback
+
+    workspace_fields = _build_edit_workspace_result_fields(edit_workspace)
     if required_edit_error is not None:
-        _write_json(log_path, {**response, 'code_chars': len(code), **required_edit_error})
-        return {
+        _write_json(log_path, {**log_payload, **required_edit_error})
+        result: Dict[str, Any] = {
             'status': 'error',
             'error': required_edit_error['detail'],
             'code_path': str(output_path),
             'agent_response_path': str(log_path),
-            'editable_manifest_path': str(edit_workspace['manifest_path']),
-            'sandbox_override_dir': (
-                str(edit_workspace['sandbox_override_dir'])
-                if edit_workspace.get('sandbox_override_dir') is not None
-                else None
-            ),
+            **workspace_fields,
             'touched_paths': touched_paths,
-            'required_edit_paths': _normalize_required_edit_paths(attempt_spec),
+            'required_edit_paths': required_edit_paths,
         }
+        if include_history:
+            result['historical_touched_paths'] = historical_touched_paths
+        return result
+
     result = {
         'status': 'success',
         'code_path': str(output_path),
@@ -677,16 +456,70 @@ def generate_candidate_loss(
         'agent_status': response.get('status'),
         'agent_error': response.get('error'),
         'code_chars': len(code),
-        'editable_manifest_path': str(edit_workspace['manifest_path']),
-        'sandbox_override_dir': (
-            str(edit_workspace['sandbox_override_dir'])
-            if edit_workspace.get('sandbox_override_dir') is not None
-            else None
-        ),
+        **workspace_fields,
         'touched_paths': touched_paths,
     }
-    _write_json(log_path, {**response, 'code_chars': len(code), 'touched_paths': touched_paths})
+    if include_history:
+        result['historical_touched_paths'] = historical_touched_paths
+    _write_json(log_path, log_payload)
     return result
+
+
+def generate_candidate_loss(
+    *,
+    task_context_path: str,
+    attempt_spec: Dict[str, Any],
+    output_code_path: str,
+    analysis_plan_path: Optional[str] = None,
+    service_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout_sec: int = 900,
+) -> Dict[str, Any]:
+    context = _prepare_candidate_edit_context(
+        task_context_path=task_context_path,
+        attempt_spec=attempt_spec,
+        output_code_path=output_code_path,
+        analysis_plan_path=analysis_plan_path,
+        notebook_name='candidate_loss_agent.ipynb',
+    )
+
+    response = run_agent_chat(
+        message=_build_candidate_loss_prompt(
+            task_context_path=context['task_context_file'],
+            analysis_plan_path=context['resolved_analysis_plan'],
+            loss_formula_path=context['resolved_loss_formula'],
+            editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
+            editable_targets=context['edit_workspace']['editable_targets'],
+            output_code_path=context['output_path'],
+            attempt_spec=attempt_spec,
+        ),
+        mode='edit',
+        working_dir=str(context['working_dir']),
+        outputs_path=str(context['experiment_dir']),
+        notebook_path=str(context['notebook_path']),
+        files=_build_agent_edit_input_files(
+            task_context_file=context['task_context_file'],
+            editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
+            editable_targets=context['edit_workspace']['editable_targets'],
+            resolved_loss_formula=context['resolved_loss_formula'],
+            resolved_analysis_plan=context['resolved_analysis_plan'],
+        ),
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+
+    log_path = context['output_path'].parent / 'agent_code_generation_response.json'
+    _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    return _finalize_candidate_edit_result(
+        output_path=context['output_path'],
+        response=response,
+        log_path=log_path,
+        edit_workspace=context['edit_workspace'],
+        before_snapshot=context['before_snapshot'],
+        attempt_spec=attempt_spec,
+        missing_output_error=f'Agent finished but did not write candidate code to {context["output_path"]}',
+    )
 
 
 def repair_candidate_loss(
@@ -700,133 +533,56 @@ def repair_candidate_loss(
     api_key: Optional[str] = None,
     timeout_sec: int = 900,
 ) -> Dict[str, Any]:
-    task_context_file = Path(task_context_path).expanduser().resolve()
     output_path = Path(output_code_path).expanduser().resolve()
     if not output_path.exists():
         raise FileNotFoundError(f'Candidate code not found for repair: {output_path}')
-
-    task_context = _load_json(task_context_file)
-    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
-    experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
-    working_dir = _resolve_working_dir(task_context)
-    notebook_path = output_path.parent / 'candidate_loss_repair_agent.ipynb'
-    edit_workspace = _prepare_attempt_edit_workspace(
-        task_context=task_context,
+    context = _prepare_candidate_edit_context(
+        task_context_path=task_context_path,
         attempt_spec=attempt_spec,
-        output_code_path=output_path,
-    )
-    before_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
-    resolved_loss_formula = (
-        Path(str(paths.get('loss_formula_path'))).expanduser().resolve()
-        if paths.get('loss_formula_path')
-        else None
-    )
-    resolved_analysis_plan = (
-        Path(analysis_plan_path).expanduser().resolve()
-        if analysis_plan_path
-        else None
+        output_code_path=output_code_path,
+        analysis_plan_path=analysis_plan_path,
+        notebook_name='candidate_loss_repair_agent.ipynb',
     )
 
     response = run_agent_chat(
         message=_build_candidate_loss_repair_prompt(
-            task_context_path=task_context_file,
-            analysis_plan_path=resolved_analysis_plan,
-            loss_formula_path=resolved_loss_formula,
-            editable_manifest_path=Path(edit_workspace['manifest_path']),
-            editable_targets=edit_workspace['editable_targets'],
-            current_code_path=output_path,
-            output_code_path=output_path,
+            task_context_path=context['task_context_file'],
+            analysis_plan_path=context['resolved_analysis_plan'],
+            loss_formula_path=context['resolved_loss_formula'],
+            editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
+            editable_targets=context['edit_workspace']['editable_targets'],
+            current_code_path=context['output_path'],
+            output_code_path=context['output_path'],
             attempt_spec=attempt_spec,
             failure_feedback=failure_feedback,
         ),
         mode='edit',
-        working_dir=str(working_dir),
-        outputs_path=str(experiment_dir),
-        notebook_path=str(notebook_path),
-        files=[
-            str(task_context_file),
-            str(edit_workspace['manifest_path']),
-            str(output_path),
-            *([str(resolved_loss_formula)] if resolved_loss_formula else []),
-            *([str(resolved_analysis_plan)] if resolved_analysis_plan else []),
-            *[
-                str(item['path'])
-                for item in edit_workspace['editable_targets']
-                if isinstance(item, dict)
-                and isinstance(item.get('path'), str)
-                and Path(str(item['path'])).is_file()
-            ],
-        ],
+        working_dir=str(context['working_dir']),
+        outputs_path=str(context['experiment_dir']),
+        notebook_path=str(context['notebook_path']),
+        files=_build_agent_edit_input_files(
+            task_context_file=context['task_context_file'],
+            editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
+            editable_targets=context['edit_workspace']['editable_targets'],
+            resolved_loss_formula=context['resolved_loss_formula'],
+            resolved_analysis_plan=context['resolved_analysis_plan'],
+            current_code_path=context['output_path'],
+        ),
         service_url=service_url,
         api_key=api_key,
         timeout_sec=timeout_sec,
     )
 
-    log_path = output_path.parent / 'agent_code_repair_response.json'
+    log_path = context['output_path'].parent / 'agent_code_repair_response.json'
     _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
-
-    code = output_path.read_text(encoding='utf-8')
-    after_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
-    touched_paths = _detect_touched_paths(before_snapshot, after_snapshot)
-    historical_touched_paths = _load_existing_touched_paths(output_path.parent)
-    effective_touched_paths = list(dict.fromkeys([*historical_touched_paths, *touched_paths]))
-    required_edit_error = _check_required_edit_paths(
-        required_edit_paths=_normalize_required_edit_paths(attempt_spec),
-        touched_paths=effective_touched_paths,
+    return _finalize_candidate_edit_result(
+        output_path=context['output_path'],
+        response=response,
+        log_path=log_path,
+        edit_workspace=context['edit_workspace'],
+        before_snapshot=context['before_snapshot'],
+        attempt_spec=attempt_spec,
+        missing_output_error=f'Agent finished but did not write repaired code to {context["output_path"]}',
+        failure_feedback=failure_feedback,
+        include_history=True,
     )
-    if required_edit_error is not None:
-        _write_json(
-            log_path,
-            {
-                **response,
-                'code_chars': len(code),
-                'failure_feedback': failure_feedback,
-                'touched_paths': touched_paths,
-                'historical_touched_paths': historical_touched_paths,
-                **required_edit_error,
-            },
-        )
-        return {
-            'status': 'error',
-            'error': required_edit_error['detail'],
-            'code_path': str(output_path),
-            'agent_response_path': str(log_path),
-            'editable_manifest_path': str(edit_workspace['manifest_path']),
-            'sandbox_override_dir': (
-                str(edit_workspace['sandbox_override_dir'])
-                if edit_workspace.get('sandbox_override_dir') is not None
-                else None
-            ),
-            'touched_paths': touched_paths,
-            'historical_touched_paths': historical_touched_paths,
-            'required_edit_paths': _normalize_required_edit_paths(attempt_spec),
-        }
-    result = {
-        'status': 'success',
-        'code_path': str(output_path),
-        'agent_response_path': str(log_path),
-        'agent_id': response.get('agent_id'),
-        'agent_text': response.get('text', ''),
-        'agent_status': response.get('status'),
-        'agent_error': response.get('error'),
-        'code_chars': len(code),
-        'editable_manifest_path': str(edit_workspace['manifest_path']),
-        'sandbox_override_dir': (
-            str(edit_workspace['sandbox_override_dir'])
-            if edit_workspace.get('sandbox_override_dir') is not None
-            else None
-        ),
-        'touched_paths': touched_paths,
-        'historical_touched_paths': historical_touched_paths,
-    }
-    _write_json(
-        log_path,
-        {
-            **response,
-            'code_chars': len(code),
-            'failure_feedback': failure_feedback,
-            'touched_paths': touched_paths,
-            'historical_touched_paths': historical_touched_paths,
-        },
-    )
-    return result
