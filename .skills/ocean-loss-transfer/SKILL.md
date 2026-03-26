@@ -25,6 +25,7 @@ last_modified: 2026-03-26
 | `ocean_loss_transfer_prepare_context` | 准备论文/代码上下文和输出路径 | 开始分析时 |
 | `ocean_loss_transfer_extract_formula` | 起草 `loss_formula.json` | 需要快速抽公式时 |
 | `ocean_loss_transfer_write_formula` | 校验并写入公式 spec | 公式确认后 |
+| `ocean_loss_transfer_generate_plan` | 根据 `task_context.json` 生成 `analysis_plan.json` 初稿 | 公式确认后、正式执行前 |
 | `ocean_loss_transfer_orchestrate` | 主入口：执行 task context + analysis plan + attempt repair 闭环 | 公式和计划就绪后 |
 | `ocean_loss_transfer_validate` | 单独验证某个 candidate/attempt | 调试 patch 时 |
 | `ocean_loss_transfer_submit_code` | 手工提交一版候选 loss 做快速验证 | 人工探针或对照实验时 |
@@ -41,7 +42,7 @@ last_modified: 2026-03-26
 ```text
 1. prepare_context
 2. extract_formula / write_formula
-3. Agent 编写 analysis_plan.json
+3. generate_plan
 4. orchestrate
 5. 失败后按 stop_layer 修复
 6. 查看 trajectory.jsonl 和 agent_loop_summary.json

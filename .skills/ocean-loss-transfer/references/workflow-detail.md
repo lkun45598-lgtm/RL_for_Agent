@@ -22,9 +22,9 @@
 2. extract_formula / write_formula
    - 产出并校验 loss_formula.json
 
-3. Agent 编写 analysis_plan.json
-   - 选择 integration path
-   - 设计 attempts
+3. generate_plan / 审阅 analysis_plan.json
+   - 让 Agent 根据 task_context 产出计划初稿
+   - 审阅 integration path 与 attempts 是否合理
 
 4. orchestrate
    - 构建 task_context.json

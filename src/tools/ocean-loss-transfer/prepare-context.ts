@@ -77,8 +77,9 @@ export const oceanLossTransferPrepareContext = defineTool({
    - 如果论文 loss 需要中间特征、uncertainty、aux tensors 或 model.forward 的额外输出，不要强行走 \`loss_only\`
    - 模型级修改只能发生在 attempt-scoped sandbox 副本里，不能直接修改 repo-root 源码
 
-3. **编写 analysis_plan.json**
-   - 将计划写到 \`analysis_plan_output_path\`
+3. **生成或编写 analysis_plan.json**
+   - 优先调用 \`ocean_loss_transfer_generate_plan\` 生成初稿，再按需要审阅/调整
+   - 计划写到 \`analysis_plan_output_path\`
    - 推荐结构：
      {
        "summary": "...",
@@ -106,7 +107,8 @@ export const oceanLossTransferPrepareContext = defineTool({
 
 完成后：
 1. 调用 ocean_loss_transfer_write_formula 写入 \`loss_formula.json\`
-2. 调用 ocean_loss_transfer_orchestrate，并传入 \`analysis_plan_path\`
+2. 调用 ocean_loss_transfer_generate_plan 生成 \`analysis_plan.json\`
+3. 调用 ocean_loss_transfer_orchestrate，并传入 \`analysis_plan_path\`
 `
     };
   }
