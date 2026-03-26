@@ -39,7 +39,7 @@ export const oceanLossTransferExtract = defineTool({
 
     const pyCode = [
       `import sys; sys.path.insert(0, "${scriptsDir}")`,
-      'from extract_loss_ir import extract_loss_ir',
+      'from loss_transfer.ir.extract_loss_ir import extract_loss_ir',
       `output = extract_loss_ir(paper_pdf_path=${paperArg}, code_repo_path=${repoArg}, output_yaml_path="${outputArg}", manual_mode=${manualArg})`,
       'print(output)'
     ].join('; ');
