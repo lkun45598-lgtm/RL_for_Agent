@@ -4,6 +4,7 @@
 export const SIMPLE_TOOL_LABELS: Record<string, string> = {
   ocean_loss_transfer_build_benchmark_catalog: '扫描 benchmark 目录',
   ocean_loss_transfer_materialize_benchmark_entry: '准备 benchmark 代码与论文路径',
+  ocean_loss_transfer_run_benchmark_batch: '批量运行 benchmark loss-transfer',
   ocean_sr_preprocess_metrics: '计算下采样数据质量指标',
   ocean_sr_preprocess_report: '生成预处理报告',
   ocean_sr_preprocess_visualize: '生成预处理后的可视化对比图',

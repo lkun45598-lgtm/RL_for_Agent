@@ -39,7 +39,8 @@ FailureCategory = Literal[
     'invalid_signature', 'blocked_pattern',
     'nan_in_forward', 'inf_in_forward', 'nan_in_gradient', 'no_gradient',
     'gradient_vanish', 'gradient_explode', 'invalid_output_type', 'not_scalar',
-    'mask_none_failed', 'runtime_error', 'import_failed',
+    'mask_none_failed', 'invalid_zero_mask_output', 'detached_zero_mask_loss',
+    'zero_mask_no_gradient', 'runtime_error', 'import_failed',
     'ssim_collapse', 'model_collapse', 'below_baseline',
     'timeout', 'oom', 'crash', 'parse_failed',
     'nan_during_training',
@@ -183,6 +184,7 @@ class SmokeTestDetail(TypedDict, total=False):
     """Layer 2 扩展 smoke 测试详情"""
     shapes_tested: List[str]
     boundary_test_passed: bool
+    zero_mask_test_passed: bool
     gradient_analysis: GradientAnalysis
 
 
@@ -239,6 +241,7 @@ class ValidationResult(_ValidationResultBase, total=False):
     # 改进6: 超时恢复
     training_curve: TrainingCurve
     partial_metrics: TrainingMetrics
+    artifact_paths: Dict[str, str]
 
 
 class ValidationIRResult(TypedDict):

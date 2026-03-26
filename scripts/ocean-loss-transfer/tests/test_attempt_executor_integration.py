@@ -12,7 +12,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from attempt_executor import execute_attempt  # noqa: E402
+from attempt_executor import _resolve_attempt_code, execute_attempt  # noqa: E402
 
 
 class AttemptExecutorIntegrationTests(unittest.TestCase):
@@ -33,6 +33,46 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
             for line in trajectory_path.read_text(encoding='utf-8').splitlines()
             if line.strip()
         ]
+
+    def test_resolve_attempt_code_falls_back_to_objective_when_relative_code_path_is_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_code_path = Path(temp_dir) / 'attempt_1' / 'candidate_loss.py'
+            generated_code = (
+                'import torch\n'
+                'def sandbox_loss(pred, target, mask=None, **kwargs):\n'
+                '    return (pred - target).abs().mean()\n'
+            )
+
+            def fake_generate_candidate_loss(**kwargs):
+                code_path = Path(kwargs['output_code_path'])
+                code_path.parent.mkdir(parents=True, exist_ok=True)
+                code_path.write_text(generated_code, encoding='utf-8')
+                return {
+                    'status': 'success',
+                    'code_path': str(code_path),
+                }
+
+            with patch(
+                'attempt_executor.generate_candidate_loss',
+                side_effect=fake_generate_candidate_loss,
+            ) as mock_generate:
+                code, source_kind, generation = _resolve_attempt_code(
+                    {
+                        'kind': 'agent_code',
+                        'code_path': 'candidate_loss.py',
+                        'objective': 'Write the candidate loss implementation',
+                    },
+                    None,
+                    task_context_path='/tmp/task_context.json',
+                    output_code_path=str(output_code_path),
+                    agent_service_url='http://127.0.0.1:8888',
+                    agent_api_key='secret_key',
+                )
+
+            self.assertEqual(code, generated_code)
+            self.assertEqual(source_kind, 'agent_code')
+            self.assertEqual(generation['status'], 'success')
+            mock_generate.assert_called_once()
 
     def test_execute_attempt_records_successful_repair_round(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

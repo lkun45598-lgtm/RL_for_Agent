@@ -141,12 +141,22 @@ def _resolve_attempt_code(
         if isinstance(inline_code, str) and inline_code.strip():
             return inline_code, 'agent_code', None
 
+        objective = attempt_spec.get('objective')
+        has_objective = isinstance(objective, str) and objective.strip()
+        resolved_output_path = Path(output_code_path).expanduser().resolve() if output_code_path else None
+
         code_path = attempt_spec.get('code_path')
         if isinstance(code_path, str) and code_path.strip():
-            return Path(code_path).read_text(encoding='utf-8'), 'agent_code', None
+            candidate_path = Path(code_path).expanduser()
+            if not candidate_path.is_absolute() and resolved_output_path is not None:
+                candidate_path = resolved_output_path.parent / candidate_path
+            candidate_path = candidate_path.resolve()
+            if candidate_path.exists():
+                return candidate_path.read_text(encoding='utf-8'), 'agent_code', None
+            if not has_objective:
+                raise ValueError(f'agent_code code_path does not exist: {candidate_path}')
 
-        objective = attempt_spec.get('objective')
-        if isinstance(objective, str) and objective.strip():
+        if has_objective:
             if not task_context_path:
                 raise ValueError('agent_code objective requires task_context_path')
             if not output_code_path:

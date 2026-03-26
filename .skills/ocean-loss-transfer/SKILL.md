@@ -24,6 +24,7 @@ last_modified: 2026-03-26
 |------|------|----------|
 | `ocean_loss_transfer_build_benchmark_catalog` | 扫描 `Benchmark/` 并生成规范化 benchmark catalog | benchmark 较多、需要批量整理时 |
 | `ocean_loss_transfer_materialize_benchmark_entry` | 将 catalog 条目解析成可直接运行的 `paper_pdf_path + code_repo_path` | code 是 zip/archive 或需要统一入口时 |
+| `ocean_loss_transfer_run_benchmark_batch` | 对一批 ready benchmark 顺序执行 context/plan/agent loop，并产出统一 summary | 需要做小规模批测、失败统计或后续 RL 反馈采样时 |
 | `ocean_loss_transfer_prepare_context` | 准备论文/代码上下文和输出路径 | 开始分析时 |
 | `ocean_loss_transfer_extract_formula` | 起草 `loss_formula.json` | 需要快速抽公式时 |
 | `ocean_loss_transfer_write_formula` | 校验并写入公式 spec | 公式确认后 |

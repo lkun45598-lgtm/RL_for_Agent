@@ -53,6 +53,7 @@ class EventCapture:
 
     def write(self, text):
         self.original.write(text)
+        self.original.flush()
         for m in EVENT_RE.finditer(text):
             try:
                 self.captured.append(json.loads(m.group(1)))

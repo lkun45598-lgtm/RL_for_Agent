@@ -317,6 +317,9 @@ def build_config_with_adapter(
         data_cfg["dyn_vars"] = dataset_meta["dyn_vars"]
         data_cfg["shape"] = dataset_meta["shape"]
         data_cfg["sample_factor"] = dataset_meta["sample_factor"]
+    # Auto-experiment validators run inside restricted sandboxes where
+    # multi-process DataLoader workers can fail on FD sharing.
+    data_cfg["num_workers"] = 0
     # Default to full precision for transferred-loss experiments because
     # auxiliary adapter heads can overflow under AMP before the loss itself diverges.
     train_cfg["use_amp"] = False

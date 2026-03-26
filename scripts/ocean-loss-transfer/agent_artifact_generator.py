@@ -140,7 +140,8 @@ def _build_candidate_loss_prompt(
 10. 原始仓库代码在这里是模板/经验库；凡是模型层改动，必须落在 copied models 目录或其它 attempt-scoped override 路径里。
 11. 如果 editable_files.json 里的 routing_policy.recommended_path 是 extend_model_outputs 或 model_surgery，不要只改 loss；需要时直接修改白名单里的 copied models/ 或 sandbox_trainer/sandbox_model_adapter。
 12. 验证器会自动为支持该能力的 copied model 打开 `output_aux_loss_inputs`；如果当前 copied model 还不支持，就在白名单内把它补上。
-13. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写到目标路径。
+13. 如果某个分支在没有有效 mask / 没有有效样本时需要返回零损失，必须返回与 pred 保持计算图连接的零值，例如 `pred.sum() * 0.0`，不要返回 detached 常量 tensor。
+14. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写到目标路径。
 
 写完之后，只回复一行简短确认：
 code_written:{output_code_path}
@@ -209,7 +210,8 @@ def _build_candidate_loss_repair_prompt(
 10. 原始仓库代码在这里是模板/经验库；凡是模型层改动，必须落在 copied models 目录或其它 attempt-scoped override 路径里。
 11. 如果 editable_files.json 里的 routing_policy.recommended_path 是 extend_model_outputs 或 model_surgery，不要只修 loss；优先检查 copied models/ 是否真的产出了所需的 loss_inputs。
 12. 如果 failure_feedback.runtime_routing 给出了各模型的 output-extension 支持状态，要利用这些信息决定该修 copied models 还是保留 adapter fallback。
-13. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写回目标路径。
+13. 如果修复分支里存在“没有有效 mask / 没有有效样本”的情况，零损失也必须与 pred 保持计算图连接，例如 `pred.sum() * 0.0`；否则 layer3 backward 会报 “does not require grad”。
+14. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写回目标路径。
 
 写完之后，只回复一行简短确认：
 code_written:{output_code_path}
