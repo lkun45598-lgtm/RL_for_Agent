@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -127,64 +128,119 @@ class RunBenchmarkBatchTests(unittest.TestCase):
             },
         }
 
-        loop_result = {
-            'status': 'completed',
-            'best_attempt_id': 2,
-            'best_metric_name': 'val_ssim',
-            'best_metric_value': 0.671,
-            'trajectory_path': '/tmp/run/entries/demo-entry/trajectory.jsonl',
-            'attempts': [
-                {'attempt_id': 1, 'passed': False, 'stop_layer': 'layer4', 'error': 'below threshold'},
-                {'attempt_id': 2, 'passed': True, 'stop_layer': None, 'error': None},
-            ],
-        }
-
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
-            'run_benchmark_batch.build_benchmark_catalog',
-            return_value=catalog,
-        ), patch(
-            'run_benchmark_batch.materialize_benchmark_entry',
-            return_value={
-                'status': 'ready',
-                'paper_pdf_path': '/tmp/paper.pdf',
-                'code_repo_path': '/tmp/code',
-                'source_code_path': '/tmp/code.zip',
-                'materialized': True,
-                'cache_dir': '/tmp/cache/demo-entry',
-            },
-        ), patch(
-            'run_benchmark_batch.build_task_context',
-            return_value=task_context,
-        ), patch(
-            'run_benchmark_batch.generate_analysis_plan',
-            return_value={
-                'status': 'success',
-                'analysis_plan_path': '/tmp/run/entries/demo-entry/analysis_plan.json',
-            },
-        ) as mock_plan, patch(
-            'run_benchmark_batch.run_agent_repair_loop',
-            return_value=loop_result,
-        ) as mock_loop:
-            result = run_benchmark_batch(
-                benchmark_root='/tmp/Benchmark',
-                output_root=temp_dir,
-                run_id='demo-run',
-                mode='agent_loop',
-                auto_generate_plan=True,
-                service_url='http://agent.local',
-                service_api_key='secret',
+        with tempfile.TemporaryDirectory() as temp_dir:
+            decision_trace_path = Path(temp_dir) / 'demo-run' / 'entries' / 'demo-entry' / 'decision_trace.jsonl'
+            rl_dataset_path = Path(temp_dir) / 'demo-run' / 'entries' / 'demo-entry' / 'rl_decision_dataset.jsonl'
+            decision_trace_path.parent.mkdir(parents=True, exist_ok=True)
+            decision_trace_path.write_text(
+                json.dumps({'attempt_id': 1, 'reward': {'primary_metric': 0.62}}, ensure_ascii=False) + '\n'
+                + json.dumps({'attempt_id': 2, 'reward': {'primary_metric': 0.671}}, ensure_ascii=False) + '\n',
+                encoding='utf-8',
+            )
+            rl_dataset_path.write_text(
+                json.dumps({'attempt_id': 1, 'terminal': False, 'reward': {'stage_score': 5}}, ensure_ascii=False) + '\n'
+                + json.dumps({'attempt_id': 2, 'terminal': True, 'reward': {'stage_score': 6}}, ensure_ascii=False) + '\n',
+                encoding='utf-8',
             )
 
-        entry = result['results'][0]
-        self.assertEqual(entry['plan_status'], 'success')
-        self.assertEqual(entry['loop_status'], 'completed')
-        self.assertEqual(entry['best_attempt_id'], 2)
-        self.assertEqual(entry['best_metric_name'], 'val_ssim')
-        self.assertEqual(entry['best_metric_value'], 0.671)
-        self.assertIsNone(entry['stop_layer'])
+            loop_result = {
+                'status': 'completed',
+                'attempt_count': 2,
+                'best_attempt_id': 2,
+                'best_metric_name': 'val_ssim',
+                'best_metric_value': 0.671,
+                'best_reward_summary': {
+                    'primary_metric_name': 'val_ssim',
+                    'primary_metric': 0.671,
+                    'stage_score': 6,
+                },
+                'best_strategy_delta': {
+                    'previous_attempt_id': 1,
+                    'why_previous_failed': 'the first attempt stayed below threshold',
+                    'what_changes_now': ['stabilize the objective'],
+                    'why_not_repeat_previous': 'the old strategy already underperformed',
+                    'expected_signal': 'validation SSIM should increase',
+                },
+                'decision_trace_path': str(decision_trace_path),
+                'decision_trace_count': 2,
+                'rl_dataset_path': str(rl_dataset_path),
+                'rl_dataset_count': 2,
+                'trajectory_path': '/tmp/run/entries/demo-entry/trajectory.jsonl',
+                'attempts': [
+                    {
+                        'attempt_id': 1,
+                        'passed': False,
+                        'stop_layer': 'layer4',
+                        'error': 'below threshold',
+                        'reward_summary': {'primary_metric_name': 'val_ssim', 'primary_metric': 0.62, 'stage_score': 5},
+                    },
+                    {
+                        'attempt_id': 2,
+                        'passed': True,
+                        'stop_layer': None,
+                        'error': None,
+                        'reward_summary': {'primary_metric_name': 'val_ssim', 'primary_metric': 0.671, 'stage_score': 6},
+                        'strategy_delta': {'previous_attempt_id': 1},
+                    },
+                ],
+            }
 
-        mock_plan.assert_called_once()
-        mock_loop.assert_called_once()
+            with patch(
+                'run_benchmark_batch.build_benchmark_catalog',
+                return_value=catalog,
+            ), patch(
+                'run_benchmark_batch.materialize_benchmark_entry',
+                return_value={
+                    'status': 'ready',
+                    'paper_pdf_path': '/tmp/paper.pdf',
+                    'code_repo_path': '/tmp/code',
+                    'source_code_path': '/tmp/code.zip',
+                    'materialized': True,
+                    'cache_dir': '/tmp/cache/demo-entry',
+                },
+            ), patch(
+                'run_benchmark_batch.build_task_context',
+                return_value=task_context,
+            ), patch(
+                'run_benchmark_batch.generate_analysis_plan',
+                return_value={
+                    'status': 'success',
+                    'analysis_plan_path': '/tmp/run/entries/demo-entry/analysis_plan.json',
+                },
+            ) as mock_plan, patch(
+                'run_benchmark_batch.run_agent_repair_loop',
+                return_value=loop_result,
+            ) as mock_loop:
+                result = run_benchmark_batch(
+                    benchmark_root='/tmp/Benchmark',
+                    output_root=temp_dir,
+                    run_id='demo-run',
+                    mode='agent_loop',
+                    auto_generate_plan=True,
+                    service_url='http://agent.local',
+                    service_api_key='secret',
+                )
+
+            entry = result['results'][0]
+            self.assertEqual(entry['plan_status'], 'success')
+            self.assertEqual(entry['loop_status'], 'completed')
+            self.assertEqual(entry['best_attempt_id'], 2)
+            self.assertEqual(entry['best_metric_name'], 'val_ssim')
+            self.assertEqual(entry['best_metric_value'], 0.671)
+            self.assertEqual(entry['attempt_count'], 2)
+            self.assertEqual(entry['best_reward_summary']['stage_score'], 6)
+            self.assertEqual(entry['representative_reward_summary']['primary_metric'], 0.671)
+            self.assertEqual(entry['representative_strategy_delta']['previous_attempt_id'], 1)
+            self.assertEqual(entry['decision_trace_count'], 2)
+            self.assertEqual(entry['rl_dataset_count'], 2)
+            self.assertTrue(Path(result['decision_trace_path']).exists())
+            self.assertEqual(result['decision_trace_count'], 2)
+            self.assertTrue(Path(result['rl_dataset_path']).exists())
+            self.assertEqual(result['rl_dataset_count'], 2)
+            self.assertIsNone(entry['stop_layer'])
+
+            mock_plan.assert_called_once()
+            mock_loop.assert_called_once()
 
 
 if __name__ == '__main__':

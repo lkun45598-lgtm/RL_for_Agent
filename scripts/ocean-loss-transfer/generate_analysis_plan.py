@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 
-from agent_artifact_generator import generate_analysis_plan as _generate_analysis_plan
+from loss_transfer.agent.agent_artifact_generator import (
+    generate_analysis_plan as _generate_analysis_plan,
+)
 
 
 def main() -> None:

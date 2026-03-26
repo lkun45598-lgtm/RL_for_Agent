@@ -68,6 +68,31 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             encoding='utf-8',
         )
 
+    def _write_single_attempt_plan(self, path: Path) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    'summary': 'Single-attempt plan to trigger dynamic replanning',
+                    'stop_on_first_pass': False,
+                    'integration_decision': {
+                        'path': 'adapter_wrapper',
+                        'rationale': 'Need adapter outputs before deciding on deeper edits.',
+                        'evidence_refs': ['paper.loss', 'code.model_forward'],
+                    },
+                    'attempts': [
+                        {
+                            'name': 'Initial attempt',
+                            'kind': 'agent_code',
+                            'objective': 'Try the first adapter-aware loss transfer.',
+                            'evidence_refs': ['paper.loss'],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding='utf-8',
+        )
+
     def _read_event_types(self, experiment_dir: Path) -> list[str]:
         trajectory_path = experiment_dir / 'trajectory.jsonl'
         if not trajectory_path.exists():
@@ -126,6 +151,10 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             self.assertEqual(result['best_attempt_id'], 2)
             self.assertEqual(result['best_metric_name'], 'swinir')
             self.assertEqual(result['best_metric_value'], 0.73)
+            self.assertEqual(result['attempt_count'], 2)
+            self.assertEqual(result['best_reward_summary']['primary_metric'], 0.73)
+            self.assertEqual(result['decision_trace_count'], 2)
+            self.assertTrue(Path(result['decision_trace_path']).exists())
             self.assertEqual(len(result['attempts']), 2)
             self.assertEqual(len(call_records), 2)
             self.assertEqual(call_records[0]['dataset_root'], '/data1/user/lz/RL_data_test')
@@ -155,6 +184,106 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 self._read_event_types(experiment_dir),
                 ['task_context_ready', 'attempt_planned', 'attempt_planned'],
+            )
+
+    def test_run_agent_repair_loop_appends_followup_attempt_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            experiment_dir = temp_root / 'experiment'
+            experiment_dir.mkdir(parents=True, exist_ok=True)
+            task_context = self._write_task_context(experiment_dir, paper_slug='paper_replan')
+            input_plan_path = temp_root / 'single_attempt_plan.json'
+            self._write_single_attempt_plan(input_plan_path)
+
+            call_records: list[dict[str, object]] = []
+
+            def fake_execute_attempt(**kwargs):
+                call_records.append(kwargs)
+                attempt_id = int(kwargs['attempt_id'])
+                if attempt_id == 1:
+                    return {
+                        'attempt_id': 1,
+                        'status': 'failed',
+                        'passed': False,
+                        'error': 'ssim collapse',
+                        'reward_summary': {
+                            'primary_metric_name': 'swinir',
+                            'primary_metric': 0.61,
+                        },
+                        'paths': {
+                            'result_path': str(experiment_dir / 'attempt_1' / 'result.json'),
+                        },
+                    }
+                return {
+                    'attempt_id': 2,
+                    'status': 'passed',
+                    'passed': True,
+                    'strategy_delta': {
+                        'previous_attempt_id': 1,
+                        'why_previous_failed': 'SSIM collapsed after the first adapter-aware transfer.',
+                        'what_changes_now': ['add a reconstruction anchor'],
+                        'why_not_repeat_previous': 'the previous objective already failed and produced no viable recovery',
+                        'expected_signal': 'validation SSIM should improve even if training loss decreases more slowly',
+                    },
+                    'reward_summary': {
+                        'primary_metric_name': 'swinir',
+                        'primary_metric': 0.7,
+                    },
+                    'paths': {
+                        'result_path': str(experiment_dir / 'attempt_2' / 'result.json'),
+                    },
+                }
+
+            with patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt), patch(
+                'loss_transfer.agent.agent_repair_loop.generate_followup_attempt',
+                return_value={
+                    'status': 'success',
+                    'attempt_path': str(experiment_dir / 'followup_attempt_2.json'),
+                    'attempt_spec': {
+                        'name': 'Replanned attempt',
+                        'kind': 'agent_code',
+                        'objective': 'Add a reconstruction anchor after SSIM collapse.',
+                        'files_to_edit': ['candidate_loss.py'],
+                        'required_edit_paths': ['sandbox_model_adapter.py'],
+                        'evidence_refs': ['result.layer4', 'repair_plan.fallback_plan'],
+                        'strategy_delta': {
+                            'previous_attempt_id': 1,
+                            'why_previous_failed': 'SSIM collapsed after the first adapter-aware transfer.',
+                            'what_changes_now': ['add a reconstruction anchor'],
+                            'why_not_repeat_previous': 'the previous objective already failed and produced no viable recovery',
+                            'expected_signal': 'validation SSIM should improve even if training loss decreases more slowly',
+                        },
+                        'run_training': True,
+                        'notes': 'Use the failed attempt feedback to change strategy.',
+                    },
+                    'latest_repair_plan_path': str(experiment_dir / 'attempt_1' / 'repair_plan_round_1.json'),
+                },
+            ) as mock_replan:
+                result = run_agent_repair_loop(
+                    task_context,
+                    analysis_plan_path=str(input_plan_path),
+                    max_attempts=3,
+                    bootstrap_formula=False,
+                    dataset_root='/data1/user/lz/RL_data_test',
+                    output_dir=str(experiment_dir),
+                    agent_service_url='http://agent.local',
+                    agent_api_key='secret',
+                )
+
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(result['best_attempt_id'], 2)
+            self.assertEqual(len(result['attempts']), 2)
+            self.assertEqual(result['best_strategy_delta']['previous_attempt_id'], 1)
+            self.assertEqual(result['decision_trace_count'], 2)
+            self.assertTrue(Path(result['decision_trace_path']).exists())
+            self.assertEqual(len(call_records), 2)
+            self.assertEqual(call_records[1]['attempt_spec']['name'], 'Replanned attempt')
+            self.assertEqual(call_records[1]['attempt_spec']['required_edit_paths'], ['sandbox_model_adapter.py'])
+            self.assertEqual(call_records[1]['attempt_spec']['strategy_delta']['previous_attempt_id'], 1)
+            mock_replan.assert_called_once()
+            self.assertEqual(
+                self._read_event_types(experiment_dir),
+                ['task_context_ready', 'attempt_planned', 'attempt_replanned', 'attempt_planned'],
             )
 
 

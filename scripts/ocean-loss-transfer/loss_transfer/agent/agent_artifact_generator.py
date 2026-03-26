@@ -21,7 +21,7 @@ from loss_transfer.agent.agent_edit_workspace import (
     snapshot_editable_targets as _snapshot_editable_targets,
 )
 from loss_transfer.agent.agent_service_client import run_agent_chat
-from loss_transfer.agent.validate_analysis_plan import validate_analysis_plan
+from loss_transfer.agent.validate_analysis_plan import validate_analysis_plan, validate_attempt_spec
 from loss_transfer.common.paths import PROJECT_ROOT
 
 
@@ -38,6 +38,53 @@ def _load_json(path: Path) -> Dict[str, Any]:
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _build_repair_plan_placeholder(failure_feedback: Dict[str, Any]) -> Dict[str, Any]:
+    performance_target = (
+        failure_feedback.get('performance_target', {})
+        if isinstance(failure_feedback.get('performance_target'), dict)
+        else {}
+    )
+    target_metric = performance_target.get('primary_metric_name')
+    if not isinstance(target_metric, str) or not target_metric.strip():
+        target_metric = 'val_ssim'
+
+    return {
+        'failure_hypothesis': '',
+        'planned_changes': [],
+        'target_metric': target_metric,
+        'success_criteria': '',
+        'fallback_plan': '',
+        'evidence_refs': [],
+    }
+
+
+def _validate_repair_plan(plan: Dict[str, Any]) -> Optional[str]:
+    string_fields = (
+        'failure_hypothesis',
+        'target_metric',
+        'success_criteria',
+        'fallback_plan',
+    )
+    for field in string_fields:
+        value = plan.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return f'repair plan field `{field}` must be a non-empty string'
+
+    planned_changes = plan.get('planned_changes')
+    if not isinstance(planned_changes, list) or not any(
+        isinstance(item, str) and item.strip() for item in planned_changes
+    ):
+        return 'repair plan field `planned_changes` must contain at least one non-empty string item'
+
+    evidence_refs = plan.get('evidence_refs')
+    if not isinstance(evidence_refs, list) or not any(
+        isinstance(item, str) and item.strip() for item in evidence_refs
+    ):
+        return 'repair plan field `evidence_refs` must contain at least one non-empty string item'
+
+    return None
 
 
 def _resolve_working_dir(task_context: Dict[str, Any]) -> Path:
@@ -158,6 +205,7 @@ def _build_candidate_loss_repair_prompt(
     editable_targets: list[Dict[str, Any]],
     current_code_path: Path,
     output_code_path: Path,
+    repair_plan_path: Path,
     attempt_spec: Dict[str, Any],
     failure_feedback: Dict[str, Any],
 ) -> str:
@@ -181,6 +229,7 @@ def _build_candidate_loss_repair_prompt(
 {formula_line}
 - editable_files.json: {editable_manifest_path}
 - current candidate_loss.py: {current_code_path}
+- repair_plan.json: {repair_plan_path}
 
 当前 attempt 如下：
 ```json
@@ -212,10 +261,102 @@ def _build_candidate_loss_repair_prompt(
 11. 如果 editable_files.json 里的 routing_policy.recommended_path 是 extend_model_outputs 或 model_surgery，不要只修 loss；优先检查 copied models/ 是否真的产出了所需的 loss_inputs。
 12. 如果 failure_feedback.runtime_routing 给出了各模型的 output-extension 支持状态，要利用这些信息决定该修 copied models 还是保留 adapter fallback。
 13. 如果修复分支里存在“没有有效 mask / 没有有效样本”的情况，零损失也必须与 pred 保持计算图连接，例如 `pred.sum() * 0.0`；否则 layer3 backward 会报 “does not require grad”。
-14. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写回目标路径。
+14. 必须先更新 repair_plan.json，再修改代码。repair_plan.json 必须是单个 JSON object，且至少包含这些字段：
+    - failure_hypothesis: 字符串，说明你认为失败的主要原因
+    - planned_changes: 字符串数组，列出本轮准备做的关键改动
+    - target_metric: 字符串，优先填想提升的主要指标，如 val_ssim
+    - success_criteria: 字符串，说明本轮希望达到什么验证结果
+    - fallback_plan: 字符串，说明如果本轮失败下一步准备怎么退路
+    - evidence_refs: 字符串数组，引用 paper/code/validator feedback 的依据
+15. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写回目标路径。
 
 写完之后，只回复一行简短确认：
 code_written:{output_code_path}
+"""
+
+
+def _resolve_latest_repair_plan_path(attempt_result: Dict[str, Any]) -> Optional[Path]:
+    metadata = attempt_result.get('metadata', {}) if isinstance(attempt_result.get('metadata'), dict) else {}
+    agent_repair = metadata.get('agent_repair', {}) if isinstance(metadata.get('agent_repair'), dict) else {}
+    direct_path = agent_repair.get('repair_plan_path')
+    if isinstance(direct_path, str) and direct_path.strip():
+        candidate = Path(direct_path).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+
+    repair_rounds = attempt_result.get('repair_rounds')
+    if not isinstance(repair_rounds, list):
+        return None
+    for round_info in reversed(repair_rounds):
+        if not isinstance(round_info, dict):
+            continue
+        artifacts = round_info.get('artifacts', {}) if isinstance(round_info.get('artifacts'), dict) else {}
+        artifact_path = artifacts.get('repair_plan_path')
+        if isinstance(artifact_path, str) and artifact_path.strip():
+            candidate = Path(artifact_path).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+        repair_payload = round_info.get('repair', {}) if isinstance(round_info.get('repair'), dict) else {}
+        repair_path = repair_payload.get('repair_plan_path')
+        if isinstance(repair_path, str) and repair_path.strip():
+            candidate = Path(repair_path).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _build_followup_attempt_prompt(
+    *,
+    task_context_path: Path,
+    analysis_plan_path: Optional[Path],
+    latest_attempt_result_path: Path,
+    latest_repair_plan_path: Optional[Path],
+    trajectory_path: Optional[Path],
+    output_attempt_path: Path,
+    max_attempts: int,
+    next_attempt_id: int,
+) -> str:
+    analysis_plan_line = f"- analysis_plan.json: {analysis_plan_path}" if analysis_plan_path else "- analysis_plan.json: (not provided)"
+    repair_plan_line = (
+        f"- latest repair_plan.json: {latest_repair_plan_path}"
+        if latest_repair_plan_path
+        else "- latest repair_plan.json: (not available)"
+    )
+    trajectory_line = f"- trajectory.jsonl: {trajectory_path}" if trajectory_path else "- trajectory.jsonl: (not available)"
+
+    return f"""你在执行 loss-transfer 的逐轮重规划阶段。
+
+请先读取：
+- task_context.json: {task_context_path}
+{analysis_plan_line}
+- latest attempt result.json: {latest_attempt_result_path}
+{repair_plan_line}
+{trajectory_line}
+
+然后写出：
+- next_attempt.json: {output_attempt_path}
+
+目标：
+基于最新失败 attempt 的验证结果、repair_plan、trajectory 历史，生成“下一条最值得尝试”的 attempt JSON object。
+
+要求：
+1. 输出必须是单个 JSON object，字段必须兼容 task_context.analysis_plan_schema.attempts[]。
+2. 这不是重写完整 analysis_plan，只写一个新的 attempt。
+3. 必须明确吸收上一轮 repair_plan 的 failure_hypothesis / fallback_plan，而不是机械重复上一轮。
+4. evidence_refs 必须非空，并引用 paper/code/result/repair_plan 中的依据。
+5. 如果上一轮已经证明某种修法失败，本轮 attempt 必须在 objective 或 notes 中明确体现“变更了什么策略”。
+6. 优先最小改动；但如果最新失败证据表明 loss-only 路线不够，需要诚实升级到 adapter/model copy 路线。
+7. 如果 latest attempt 已经在 layer4/性能层失败，本轮重点是提高主要指标，而不是只做语法修补。
+8. attempts 总预算最多 {max_attempts}，当前将生成第 {next_attempt_id} 个 attempt，请避免无信息增益的重复尝试。
+9. 必须填写 strategy_delta 对象，至少包含：
+    - previous_attempt_id
+    - why_previous_failed
+    - what_changes_now
+    - why_not_repeat_previous
+    - expected_signal
+
+写完之后，只回复一行简短确认：
+attempt_written:{output_attempt_path}
 """
 
 
@@ -286,6 +427,136 @@ def generate_analysis_plan(
     return result
 
 
+def generate_followup_attempt(
+    latest_attempt_result_path: str,
+    *,
+    task_context_path: str,
+    output_attempt_path: str,
+    analysis_plan_path: Optional[str] = None,
+    service_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout_sec: int = 900,
+    max_attempts: int = 4,
+    next_attempt_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    task_context_file = Path(task_context_path).expanduser().resolve()
+    latest_result_file = Path(latest_attempt_result_path).expanduser().resolve()
+    output_path = Path(output_attempt_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    task_context = _load_json(task_context_file)
+    attempt_result = _load_json(latest_result_file)
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
+    working_dir = _resolve_working_dir(task_context)
+    notebook_path = output_path.parent / 'followup_attempt_agent.ipynb'
+    resolved_analysis_plan = (
+        Path(analysis_plan_path).expanduser().resolve()
+        if analysis_plan_path
+        else (
+            Path(str(paths.get('analysis_plan_path'))).expanduser().resolve()
+            if paths.get('analysis_plan_path')
+            else None
+        )
+    )
+    trajectory_path = (
+        Path(str(paths.get('trajectory_path'))).expanduser().resolve()
+        if paths.get('trajectory_path')
+        else None
+    )
+    latest_repair_plan = _resolve_latest_repair_plan_path(attempt_result)
+    resolved_next_attempt_id = (
+        int(next_attempt_id)
+        if next_attempt_id is not None
+        else int(attempt_result.get('attempt_id', 0)) + 1
+    )
+
+    files = [str(task_context_file), str(latest_result_file)]
+    if resolved_analysis_plan is not None and resolved_analysis_plan.exists():
+        files.append(str(resolved_analysis_plan))
+    if trajectory_path is not None and trajectory_path.exists():
+        files.append(str(trajectory_path))
+    if latest_repair_plan is not None and latest_repair_plan.exists():
+        files.append(str(latest_repair_plan))
+
+    response = run_agent_chat(
+        message=_build_followup_attempt_prompt(
+            task_context_path=task_context_file,
+            analysis_plan_path=resolved_analysis_plan if resolved_analysis_plan and resolved_analysis_plan.exists() else None,
+            latest_attempt_result_path=latest_result_file,
+            latest_repair_plan_path=latest_repair_plan,
+            trajectory_path=trajectory_path if trajectory_path and trajectory_path.exists() else None,
+            output_attempt_path=output_path,
+            max_attempts=max_attempts,
+            next_attempt_id=resolved_next_attempt_id,
+        ),
+        mode='edit',
+        working_dir=str(working_dir),
+        outputs_path=str(experiment_dir),
+        notebook_path=str(notebook_path),
+        files=files,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+
+    log_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_agent_response.json'
+    _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+
+    if response.get('status') == 'error':
+        return {
+            'status': 'error',
+            'error': response.get('error'),
+            'attempt_path': str(output_path),
+            'agent_response_path': str(log_path),
+        }
+
+    if not output_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Agent finished but did not write next_attempt.json to {output_path}',
+            'attempt_path': str(output_path),
+            'agent_response_path': str(log_path),
+            'agent_text': response.get('text', ''),
+        }
+
+    attempt_payload = _load_json(output_path)
+    validation = validate_attempt_spec(attempt_payload)
+    _write_json(log_path, {**response, 'validation': validation, 'latest_repair_plan_path': str(latest_repair_plan) if latest_repair_plan else None})
+    if validation['status'] == 'error' or not isinstance(validation.get('normalized_attempt'), dict):
+        return {
+            'status': 'error',
+            'error': 'follow-up attempt validation failed: ' + '; '.join(validation.get('errors', [])),
+            'attempt_path': str(output_path),
+            'agent_response_path': str(log_path),
+            'agent_text': response.get('text', ''),
+            'validation': validation,
+        }
+
+    normalized_attempt = validation['normalized_attempt']
+    strategy_delta = normalized_attempt.get('strategy_delta')
+    if not isinstance(strategy_delta, dict):
+        return {
+            'status': 'error',
+            'error': 'follow-up attempt must include a non-empty strategy_delta object',
+            'attempt_path': str(output_path),
+            'agent_response_path': str(log_path),
+            'agent_text': response.get('text', ''),
+            'validation': validation,
+        }
+
+    return {
+        'status': 'success',
+        'attempt_path': str(output_path),
+        'attempt_spec': normalized_attempt,
+        'agent_response_path': str(log_path),
+        'agent_id': response.get('agent_id'),
+        'agent_text': response.get('text', ''),
+        'validation': validation,
+        'latest_repair_plan_path': str(latest_repair_plan) if latest_repair_plan else None,
+    }
+
+
 def _resolve_candidate_support_paths(
     *,
     paths: Dict[str, Any],
@@ -343,20 +614,37 @@ def _prepare_candidate_edit_context(
     output_code_path: str,
     analysis_plan_path: Optional[str],
     notebook_name: str,
+    failure_feedback: Optional[Dict[str, Any]] = None,
+    repair_plan_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     task_context_file = Path(task_context_path).expanduser().resolve()
     output_path = Path(output_code_path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_repair_plan_path = (
+        Path(repair_plan_path).expanduser().resolve() if repair_plan_path else None
+    )
 
     task_context = _load_json(task_context_file)
     paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
     experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
     working_dir = _resolve_working_dir(task_context)
     notebook_path = output_path.parent / notebook_name
+    additional_editable_targets: list[Dict[str, Any]] = []
+    if resolved_repair_plan_path is not None:
+        placeholder = _build_repair_plan_placeholder(failure_feedback or {})
+        _write_json(resolved_repair_plan_path, placeholder)
+        additional_editable_targets.append(
+            {
+                'path': str(resolved_repair_plan_path),
+                'kind': 'repair_plan',
+                'description': 'Structured per-round repair hypothesis and execution plan.',
+            }
+        )
     edit_workspace = _prepare_attempt_edit_workspace(
         task_context=task_context,
         attempt_spec=attempt_spec,
         output_code_path=output_path,
+        additional_editable_targets=additional_editable_targets,
     )
     before_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
     support_paths = _resolve_candidate_support_paths(
@@ -375,6 +663,7 @@ def _prepare_candidate_edit_context(
         'before_snapshot': before_snapshot,
         'resolved_loss_formula': support_paths['loss_formula_path'],
         'resolved_analysis_plan': support_paths['analysis_plan_path'],
+        'repair_plan_path': resolved_repair_plan_path,
     }
 
 
@@ -468,6 +757,53 @@ def _finalize_candidate_edit_result(
     return result
 
 
+def _finalize_repair_plan_result(
+    *,
+    result: Dict[str, Any],
+    log_path: Path,
+    repair_plan_path: Optional[Path],
+) -> Dict[str, Any]:
+    if result.get('status') != 'success':
+        return result
+    if repair_plan_path is None:
+        return result
+
+    if not repair_plan_path.exists():
+        return {
+            **result,
+            'status': 'error',
+            'error': f'Agent finished but did not write repair_plan.json to {repair_plan_path}',
+            'repair_plan_path': str(repair_plan_path),
+        }
+
+    repair_plan = _load_json(repair_plan_path)
+    validation_error = _validate_repair_plan(repair_plan)
+    if validation_error is not None:
+        return {
+            **result,
+            'status': 'error',
+            'error': f'Invalid repair_plan.json: {validation_error}',
+            'repair_plan_path': str(repair_plan_path),
+        }
+
+    summary = {
+        'failure_hypothesis': repair_plan['failure_hypothesis'],
+        'target_metric': repair_plan['target_metric'],
+        'planned_change_count': len(repair_plan['planned_changes']),
+    }
+    log_payload = _load_json(log_path)
+    log_payload['repair_plan_path'] = str(repair_plan_path)
+    log_payload['repair_plan'] = repair_plan
+    _write_json(log_path, log_payload)
+
+    return {
+        **result,
+        'repair_plan_path': str(repair_plan_path),
+        'repair_plan': repair_plan,
+        'repair_plan_summary': summary,
+    }
+
+
 def generate_candidate_loss(
     *,
     task_context_path: str,
@@ -531,6 +867,7 @@ def repair_candidate_loss(
     attempt_spec: Dict[str, Any],
     output_code_path: str,
     failure_feedback: Dict[str, Any],
+    repair_plan_path: Optional[str] = None,
     analysis_plan_path: Optional[str] = None,
     service_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -539,12 +876,15 @@ def repair_candidate_loss(
     output_path = Path(output_code_path).expanduser().resolve()
     if not output_path.exists():
         raise FileNotFoundError(f'Candidate code not found for repair: {output_path}')
+    resolved_repair_plan_path = repair_plan_path or str(output_path.parent / 'repair_plan.json')
     context = _prepare_candidate_edit_context(
         task_context_path=task_context_path,
         attempt_spec=attempt_spec,
         output_code_path=output_code_path,
         analysis_plan_path=analysis_plan_path,
         notebook_name='candidate_loss_repair_agent.ipynb',
+        failure_feedback=failure_feedback,
+        repair_plan_path=resolved_repair_plan_path,
     )
 
     response = run_agent_chat(
@@ -556,6 +896,7 @@ def repair_candidate_loss(
             editable_targets=context['edit_workspace']['editable_targets'],
             current_code_path=context['output_path'],
             output_code_path=context['output_path'],
+            repair_plan_path=context['repair_plan_path'] or (context['output_path'].parent / 'repair_plan.json'),
             attempt_spec=attempt_spec,
             failure_feedback=failure_feedback,
         ),
@@ -578,7 +919,7 @@ def repair_candidate_loss(
 
     log_path = context['output_path'].parent / 'agent_code_repair_response.json'
     _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
-    return _finalize_candidate_edit_result(
+    result = _finalize_candidate_edit_result(
         output_path=context['output_path'],
         response=response,
         log_path=log_path,
@@ -588,4 +929,9 @@ def repair_candidate_loss(
         missing_output_error=f'Agent finished but did not write repaired code to {context["output_path"]}',
         failure_feedback=failure_feedback,
         include_history=True,
+    )
+    return _finalize_repair_plan_result(
+        result=result,
+        log_path=log_path,
+        repair_plan_path=context['repair_plan_path'],
     )

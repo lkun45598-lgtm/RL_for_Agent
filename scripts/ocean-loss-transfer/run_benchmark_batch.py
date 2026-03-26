@@ -13,12 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from agent_artifact_generator import generate_analysis_plan
-from agent_repair_loop import run_agent_repair_loop
 from build_benchmark_catalog import build_benchmark_catalog
-from context_builder import build_task_context
+from loss_transfer.agent.agent_artifact_generator import generate_analysis_plan
+from loss_transfer.agent.agent_repair_loop import run_agent_repair_loop
+from loss_transfer.common.trajectory_logger import write_json
+from loss_transfer.context.context_builder import build_task_context
 from materialize_benchmark_entry import materialize_benchmark_entry
-from trajectory_logger import write_json
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -132,6 +132,49 @@ def _extract_loop_error(loop_result: Dict[str, Any]) -> Optional[str]:
         return None
     error = representative.get('error')
     return str(error) if error else None
+
+
+def _extract_reward_snapshot(attempt: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(attempt, dict):
+        return {}
+    reward = attempt.get('reward_summary')
+    return dict(reward) if isinstance(reward, dict) else {}
+
+
+def _aggregate_jsonl_artifact(
+    run_dir: Path,
+    results: List[Dict[str, Any]],
+    *,
+    path_key: str,
+    count_key: str,
+    output_name: str,
+) -> Dict[str, Any]:
+    aggregate_path = run_dir / output_name
+    records_written = 0
+    aggregate_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with aggregate_path.open('w', encoding='utf-8') as aggregate:
+        for result in results:
+            trace_path = result.get(path_key)
+            if not isinstance(trace_path, str) or not trace_path.strip():
+                continue
+            candidate = Path(trace_path).expanduser().resolve()
+            if not candidate.exists():
+                continue
+            for line in candidate.read_text(encoding='utf-8').splitlines():
+                if not line.strip():
+                    continue
+                aggregate.write(line + '\n')
+                records_written += 1
+
+    if records_written == 0:
+        aggregate_path.unlink(missing_ok=True)
+        return {}
+
+    return {
+        path_key: str(aggregate_path),
+        count_key: records_written,
+    }
 
 
 def _derive_overall_status(entry_summary: Dict[str, Any], *, mode: str) -> str:
@@ -262,6 +305,19 @@ def _run_single_entry(
                     'best_metric_name': loop_result.get('best_metric_name'),
                     'best_metric_value': loop_result.get('best_metric_value'),
                     'stop_layer': representative_attempt.get('stop_layer') if representative_attempt else None,
+                    'representative_reward_summary': _extract_reward_snapshot(representative_attempt),
+                    'representative_strategy_delta': (
+                        representative_attempt.get('strategy_delta')
+                        if isinstance(representative_attempt, dict)
+                        else None
+                    ),
+                    'decision_trace_path': loop_result.get('decision_trace_path'),
+                    'decision_trace_count': loop_result.get('decision_trace_count'),
+                    'rl_dataset_path': loop_result.get('rl_dataset_path'),
+                    'rl_dataset_count': loop_result.get('rl_dataset_count'),
+                    'attempt_count': loop_result.get('attempt_count'),
+                    'best_reward_summary': loop_result.get('best_reward_summary'),
+                    'best_strategy_delta': loop_result.get('best_strategy_delta'),
                     'trajectory_path': loop_result.get('trajectory_path', summary.get('trajectory_path')),
                 }
             )
@@ -355,6 +411,24 @@ def run_benchmark_batch(
         'results': results,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
+    summary.update(
+        _aggregate_jsonl_artifact(
+            run_dir,
+            results,
+            path_key='decision_trace_path',
+            count_key='decision_trace_count',
+            output_name='decision_trace.jsonl',
+        )
+    )
+    summary.update(
+        _aggregate_jsonl_artifact(
+            run_dir,
+            results,
+            path_key='rl_dataset_path',
+            count_key='rl_dataset_count',
+            output_name='rl_decision_dataset.jsonl',
+        )
+    )
     write_json(run_dir / 'benchmark_run_summary.json', summary)
     return summary
 

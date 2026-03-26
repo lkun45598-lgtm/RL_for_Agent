@@ -116,10 +116,30 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                 code_path = Path(kwargs['code_path'])
                 code_path.write_text(repaired_code, encoding='utf-8')
                 response_path = code_path.parent / 'repair_response.json'
+                repair_plan_path = code_path.parent / 'repair_plan_round_1.json'
                 response_path.write_text(json.dumps({'status': 'success'}), encoding='utf-8')
+                repair_plan_path.write_text(
+                    json.dumps(
+                        {
+                            'failure_hypothesis': 'layer3 timeout comes from unstable residual weighting',
+                            'planned_changes': ['switch to L1 residual', 'preserve current adapter path'],
+                            'target_metric': 'val_ssim',
+                            'success_criteria': 'pass layer3 and improve validation SSIM',
+                            'fallback_plan': 'add a reconstruction anchor term if metrics still collapse',
+                            'evidence_refs': ['validator.layer3'],
+                        }
+                    ),
+                    encoding='utf-8',
+                )
                 return {
                     'status': 'success',
                     'agent_response_path': str(response_path),
+                    'repair_plan_path': str(repair_plan_path),
+                    'repair_plan_summary': {
+                        'failure_hypothesis': 'layer3 timeout comes from unstable residual weighting',
+                        'target_metric': 'val_ssim',
+                        'planned_change_count': 2,
+                    },
                 }
 
             with patch('loss_transfer.attempts.attempt_executor._load_baseline_thresholds', return_value=self._baseline()), patch(
@@ -132,7 +152,18 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                 result = execute_attempt(
                     'paper_success',
                     1,
-                    {'name': 'Attempt 1', 'kind': 'agent_code', 'run_training': True},
+                    {
+                        'name': 'Attempt 1',
+                        'kind': 'agent_code',
+                        'run_training': True,
+                        'strategy_delta': {
+                            'previous_attempt_id': 0,
+                            'why_previous_failed': 'bootstrap candidate was unavailable',
+                            'what_changes_now': ['repair timeout with a smoother loss surface'],
+                            'why_not_repeat_previous': 'the pre-repair candidate already timed out',
+                            'expected_signal': 'layer3 should pass and validation SSIM should improve',
+                        },
+                    },
                     output_dir=str(output_dir),
                 )
 
@@ -143,8 +174,16 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
             self.assertEqual(result['repair_rounds'][0]['status'], 'success')
             self.assertEqual(result['reward_summary']['primary_metric_name'], 'swinir')
             self.assertEqual(result['reward_summary']['primary_metric'], 0.72)
+            self.assertEqual(result['reward_summary']['stage_score'], 6)
+            self.assertTrue(result['reward_summary']['passed'])
+            self.assertEqual(result['reward_summary']['repair_rounds_used'], 1)
+            self.assertEqual(result['strategy_delta']['previous_attempt_id'], 0)
             self.assertTrue((attempt_dir / 'candidate_loss_after_repair_round_1.py').exists())
             self.assertTrue((attempt_dir / 'agent_code_repair_response_round_1.json').exists())
+            self.assertEqual(
+                result['repair_rounds'][0]['artifacts']['repair_plan_path'],
+                str(attempt_dir / 'repair_plan_round_1.json'),
+            )
             self.assertEqual((attempt_dir / 'candidate_loss.py').read_text(encoding='utf-8'), repaired_code)
             self.assertEqual(
                 self._read_event_types(output_dir),

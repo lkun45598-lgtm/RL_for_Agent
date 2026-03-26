@@ -128,6 +128,7 @@ def prepare_attempt_edit_workspace(
     output_code_path: Path,
     override_file_sources: Optional[Dict[str, Path]] = None,
     override_tree_sources: Optional[Dict[str, Path]] = None,
+    additional_editable_targets: Optional[list[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     file_sources = override_file_sources or _DEFAULT_OVERRIDE_FILE_SOURCES
     tree_sources = override_tree_sources or _DEFAULT_OVERRIDE_TREE_SOURCES
@@ -194,6 +195,14 @@ def prepare_attempt_edit_workspace(
                 ),
             }
         )
+
+    for target in additional_editable_targets or []:
+        if not isinstance(target, dict):
+            continue
+        path = target.get('path')
+        if not isinstance(path, str) or not path.strip():
+            continue
+        editable_targets.append(dict(target))
 
     manifest = {
         'candidate_loss_path': str(output_code_path),
