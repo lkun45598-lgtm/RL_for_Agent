@@ -94,6 +94,50 @@ def _validate_integration_decision(
     }
 
 
+def _validate_strategy_delta(
+    value: Any,
+    *,
+    prefix: str,
+    errors: List[str],
+    warnings: List[str],
+) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        errors.append(f'{prefix} must be an object')
+        return None
+
+    previous_attempt_id = value.get('previous_attempt_id')
+    if previous_attempt_id is not None and not isinstance(previous_attempt_id, int):
+        errors.append(f'{prefix}.previous_attempt_id must be an integer when provided')
+
+    why_previous_failed = _as_non_empty_str(value.get('why_previous_failed'))
+    what_changes_now = _validate_string_list(
+        value.get('what_changes_now'),
+        field_name=f'{prefix}.what_changes_now',
+        errors=errors,
+    )
+    why_not_repeat_previous = _as_non_empty_str(value.get('why_not_repeat_previous'))
+    expected_signal = _as_non_empty_str(value.get('expected_signal'))
+
+    if why_previous_failed is None:
+        warnings.append(f'{prefix}.why_previous_failed is missing; replan rationale is weak')
+    if not what_changes_now:
+        warnings.append(f'{prefix}.what_changes_now is empty; strategy delta is not explicit')
+    if why_not_repeat_previous is None:
+        warnings.append(f'{prefix}.why_not_repeat_previous is missing')
+    if expected_signal is None:
+        warnings.append(f'{prefix}.expected_signal is missing')
+
+    return {
+        'previous_attempt_id': previous_attempt_id,
+        'why_previous_failed': why_previous_failed,
+        'what_changes_now': what_changes_now,
+        'why_not_repeat_previous': why_not_repeat_previous,
+        'expected_signal': expected_signal,
+    }
+
+
 def _validate_attempt(
     attempt: Any,
     *,
@@ -126,6 +170,12 @@ def _validate_attempt(
         attempt.get('evidence_refs'),
         field_name=f'{prefix}.evidence_refs',
         errors=errors,
+    )
+    strategy_delta = _validate_strategy_delta(
+        attempt.get('strategy_delta'),
+        prefix=f'{prefix}.strategy_delta',
+        errors=errors,
+        warnings=warnings,
     )
     notes = attempt.get('notes')
     run_training = attempt.get('run_training', True)
@@ -179,8 +229,29 @@ def _validate_attempt(
         'files_to_edit': files_to_edit,
         'required_edit_paths': required_edit_paths,
         'evidence_refs': evidence_refs,
+        'strategy_delta': strategy_delta,
         'run_training': run_training,
         'notes': notes,
+    }
+
+
+def validate_attempt_spec(attempt: Any) -> Dict[str, Any]:
+    errors: List[str] = []
+    warnings: List[str] = []
+    normalized_attempt = _validate_attempt(
+        attempt,
+        index=0,
+        errors=errors,
+        warnings=warnings,
+    )
+    status = 'ok' if not errors else 'error'
+    if status == 'ok' and warnings:
+        status = 'warning'
+    return {
+        'status': status,
+        'errors': errors,
+        'warnings': warnings,
+        'normalized_attempt': normalized_attempt if not errors else None,
     }
 
 

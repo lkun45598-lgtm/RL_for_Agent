@@ -109,7 +109,26 @@ class AttemptStateTests(unittest.TestCase):
 
         self.assertEqual(result['status'], 'passed')
         self.assertTrue(result['passed_formula_alignment'])
-        self.assertEqual(result['reward_summary'], build_reward_summary(metric_name='swinir', metric_value=0.72, baseline_delta=0.06))
+        self.assertEqual(
+            result['reward_summary'],
+            build_reward_summary(
+                metric_name='swinir',
+                metric_value=0.72,
+                baseline_delta=0.06,
+                passed=True,
+                stop_layer=None,
+                validation={
+                    'layer1': {'passed': True},
+                    'layer2': {'passed': True},
+                    'formula_alignment': {'passed': True},
+                },
+                metrics={'swinir': 0.72},
+                repair_rounds=[{'round': 1}],
+                passed_static=True,
+                passed_smoke=True,
+                passed_formula_alignment=True,
+            ),
+        )
 
 
 if __name__ == '__main__':

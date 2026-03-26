@@ -11,10 +11,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from loss_transfer.formula.formula_code_generator import supports_formula_codegen
-from loss_transfer.attempts.integration_policy import merge_attempt_with_edit_policy, resolve_recommended_integration_path
-from loss_transfer.common.trajectory_logger import append_trajectory_event, ensure_experiment_dir, write_json
+from loss_transfer.agent.agent_artifact_generator import generate_followup_attempt
 from loss_transfer.agent.validate_analysis_plan import validate_analysis_plan
+from loss_transfer.attempts.integration_policy import merge_attempt_with_edit_policy, resolve_recommended_integration_path
+from loss_transfer.common.decision_trace import write_decision_trace
+from loss_transfer.common.trajectory_logger import append_trajectory_event, ensure_experiment_dir, write_json
+from loss_transfer.formula.formula_code_generator import supports_formula_codegen
 
 
 def _load_analysis_plan(path: str) -> Dict[str, Any]:
@@ -145,13 +147,36 @@ def _summarize_attempts(
         'analysis_plan_path': analysis_plan_path,
         'trajectory_path': str(experiment_dir / 'trajectory.jsonl'),
         'attempts': attempts,
+        'attempt_count': len(attempts),
         'best_attempt_id': best_attempt_id,
         'best_metric_name': best_metric_name,
         'best_metric_value': best_metric_value,
     }
+    if best_attempt_id is not None:
+        for attempt in attempts:
+            if isinstance(attempt, dict) and attempt.get('attempt_id') == best_attempt_id:
+                summary['best_reward_summary'] = attempt.get('reward_summary')
+                summary['best_strategy_delta'] = attempt.get('strategy_delta')
+                break
     if attempts and all(not bool(attempt.get('passed')) for attempt in attempts):
         summary['status'] = 'completed_with_failures'
     return summary
+
+
+def _attempt_signature(attempt: Dict[str, Any]) -> str:
+    keys = (
+        'kind',
+        'variant',
+        'objective',
+        'code_path',
+        'run_training',
+        'files_to_edit',
+        'required_edit_paths',
+        'notes',
+        'strategy_delta',
+    )
+    payload = {key: attempt.get(key) for key in keys}
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def run_agent_repair_loop(
@@ -217,21 +242,28 @@ def run_agent_repair_loop(
     stop_on_first_pass = bool(analysis_plan.get('stop_on_first_pass', False))
     executed_attempts: List[Dict[str, Any]] = []
     from loss_transfer.attempts.attempt_executor import execute_attempt
+    integration_path = resolve_recommended_integration_path(task_context, analysis_plan)
+    seen_attempt_signatures = {_attempt_signature(attempt) for attempt in attempts}
+    from loss_transfer.attempts.attempt_executor import execute_attempt
 
-    for index, attempt in enumerate(attempts[:max_attempts], start=1):
+    index = 0
+    while index < len(attempts) and len(executed_attempts) < max_attempts:
+        attempt = attempts[index]
+        attempt_id = index + 1
         append_trajectory_event(
             paper_slug,
             'attempt_planned',
             {
-                'attempt_id': index,
+                'attempt_id': attempt_id,
                 'name': attempt.get('name'),
                 'kind': attempt.get('kind'),
+                'strategy_delta': attempt.get('strategy_delta'),
             },
             output_dir=output_dir,
         )
         result = execute_attempt(
             paper_slug=paper_slug,
-            attempt_id=index,
+            attempt_id=attempt_id,
             attempt_spec=attempt,
             dataset_root=dataset_root or task_context.get('inputs', {}).get('dataset_root'),
             output_dir=output_dir,
@@ -243,6 +275,82 @@ def run_agent_repair_loop(
         executed_attempts.append(result)
         if stop_on_first_pass and result.get('passed'):
             break
+        index += 1
+
+        if index < len(attempts):
+            continue
+        if len(attempts) >= max_attempts:
+            continue
+        if result.get('passed'):
+            continue
+        if not agent_service_url:
+            continue
+        task_context_path = task_context.get('paths', {}).get('task_context_path')
+        if not isinstance(task_context_path, str) or not task_context_path:
+            continue
+        result_path = ((result.get('paths') or {}) if isinstance(result.get('paths'), dict) else {}).get('result_path')
+        if not isinstance(result_path, str) or not result_path:
+            continue
+
+        followup_attempt_path = experiment_dir / f'followup_attempt_{len(attempts) + 1}.json'
+        replan = generate_followup_attempt(
+            result_path,
+            task_context_path=task_context_path,
+            output_attempt_path=str(followup_attempt_path),
+            analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else analysis_plan_path,
+            service_url=agent_service_url,
+            api_key=agent_api_key,
+            max_attempts=max_attempts,
+            next_attempt_id=len(attempts) + 1,
+        )
+        if replan.get('status') != 'success':
+            append_trajectory_event(
+                paper_slug,
+                'attempt_replan_failed',
+                {
+                    'attempt_id': attempt_id,
+                    'next_attempt_id': len(attempts) + 1,
+                    'error': replan.get('error'),
+                    'attempt_path': replan.get('attempt_path'),
+                },
+                output_dir=output_dir,
+            )
+            continue
+
+        new_attempt_spec = merge_attempt_with_edit_policy(
+            dict(replan['attempt_spec']),
+            integration_path=integration_path,
+        )
+        signature = _attempt_signature(new_attempt_spec)
+        if signature in seen_attempt_signatures:
+            append_trajectory_event(
+                paper_slug,
+                'attempt_replan_skipped_duplicate',
+                {
+                    'attempt_id': attempt_id,
+                    'next_attempt_id': len(attempts) + 1,
+                    'attempt_path': replan.get('attempt_path'),
+                },
+                output_dir=output_dir,
+            )
+            continue
+
+        seen_attempt_signatures.add(signature)
+        attempts.append(new_attempt_spec)
+        append_trajectory_event(
+            paper_slug,
+            'attempt_replanned',
+            {
+                'source_attempt_id': attempt_id,
+                'next_attempt_id': len(attempts),
+                'attempt_path': replan.get('attempt_path'),
+                'repair_plan_path': replan.get('latest_repair_plan_path'),
+                'name': new_attempt_spec.get('name'),
+                'kind': new_attempt_spec.get('kind'),
+                'strategy_delta': new_attempt_spec.get('strategy_delta'),
+            },
+            output_dir=output_dir,
+        )
 
     summary = _summarize_attempts(
         paper_slug=paper_slug,
@@ -250,6 +358,16 @@ def run_agent_repair_loop(
         attempts=executed_attempts,
         analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else analysis_plan_path,
         output_dir=output_dir,
+    )
+    summary.update(
+        write_decision_trace(
+            experiment_dir=experiment_dir,
+            paper_slug=paper_slug,
+            task_context=task_context,
+            analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else analysis_plan_path,
+            trajectory_path=str(experiment_dir / 'trajectory.jsonl'),
+            attempts=executed_attempts,
+        )
     )
     write_json(experiment_dir / 'agent_loop_summary.json', summary)
     return summary

@@ -12,7 +12,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from loss_transfer.attempts.attempt_executor import execute_attempt  # noqa: E402
+from loss_transfer.attempts.attempt_executor import _resolve_attempt_code, execute_attempt  # noqa: E402
 
 
 class AttemptExecutorIntegrationTests(unittest.TestCase):
@@ -33,6 +33,46 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
             for line in trajectory_path.read_text(encoding='utf-8').splitlines()
             if line.strip()
         ]
+
+    def test_resolve_attempt_code_falls_back_to_objective_when_relative_code_path_is_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_code_path = Path(temp_dir) / 'attempt_1' / 'candidate_loss.py'
+            generated_code = (
+                'import torch\n'
+                'def sandbox_loss(pred, target, mask=None, **kwargs):\n'
+                '    return (pred - target).abs().mean()\n'
+            )
+
+            def fake_generate_candidate_loss(**kwargs):
+                code_path = Path(kwargs['output_code_path'])
+                code_path.parent.mkdir(parents=True, exist_ok=True)
+                code_path.write_text(generated_code, encoding='utf-8')
+                return {
+                    'status': 'success',
+                    'code_path': str(code_path),
+                }
+
+            with patch(
+                'loss_transfer.attempts.attempt_executor.generate_candidate_loss',
+                side_effect=fake_generate_candidate_loss,
+            ) as mock_generate:
+                code, source_kind, generation = _resolve_attempt_code(
+                    {
+                        'kind': 'agent_code',
+                        'code_path': 'candidate_loss.py',
+                        'objective': 'Write the candidate loss implementation',
+                    },
+                    None,
+                    task_context_path='/tmp/task_context.json',
+                    output_code_path=str(output_code_path),
+                    agent_service_url='http://127.0.0.1:8888',
+                    agent_api_key='secret_key',
+                )
+
+            self.assertEqual(code, generated_code)
+            self.assertEqual(source_kind, 'agent_code')
+            self.assertEqual(generation['status'], 'success')
+            mock_generate.assert_called_once()
 
     def test_execute_attempt_records_successful_repair_round(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -76,10 +116,30 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                 code_path = Path(kwargs['code_path'])
                 code_path.write_text(repaired_code, encoding='utf-8')
                 response_path = code_path.parent / 'repair_response.json'
+                repair_plan_path = code_path.parent / 'repair_plan_round_1.json'
                 response_path.write_text(json.dumps({'status': 'success'}), encoding='utf-8')
+                repair_plan_path.write_text(
+                    json.dumps(
+                        {
+                            'failure_hypothesis': 'layer3 timeout comes from unstable residual weighting',
+                            'planned_changes': ['switch to L1 residual', 'preserve current adapter path'],
+                            'target_metric': 'val_ssim',
+                            'success_criteria': 'pass layer3 and improve validation SSIM',
+                            'fallback_plan': 'add a reconstruction anchor term if metrics still collapse',
+                            'evidence_refs': ['validator.layer3'],
+                        }
+                    ),
+                    encoding='utf-8',
+                )
                 return {
                     'status': 'success',
                     'agent_response_path': str(response_path),
+                    'repair_plan_path': str(repair_plan_path),
+                    'repair_plan_summary': {
+                        'failure_hypothesis': 'layer3 timeout comes from unstable residual weighting',
+                        'target_metric': 'val_ssim',
+                        'planned_change_count': 2,
+                    },
                 }
 
             with patch('loss_transfer.attempts.attempt_executor._load_baseline_thresholds', return_value=self._baseline()), patch(
@@ -92,7 +152,18 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
                 result = execute_attempt(
                     'paper_success',
                     1,
-                    {'name': 'Attempt 1', 'kind': 'agent_code', 'run_training': True},
+                    {
+                        'name': 'Attempt 1',
+                        'kind': 'agent_code',
+                        'run_training': True,
+                        'strategy_delta': {
+                            'previous_attempt_id': 0,
+                            'why_previous_failed': 'bootstrap candidate was unavailable',
+                            'what_changes_now': ['repair timeout with a smoother loss surface'],
+                            'why_not_repeat_previous': 'the pre-repair candidate already timed out',
+                            'expected_signal': 'layer3 should pass and validation SSIM should improve',
+                        },
+                    },
                     output_dir=str(output_dir),
                 )
 
@@ -103,8 +174,16 @@ class AttemptExecutorIntegrationTests(unittest.TestCase):
             self.assertEqual(result['repair_rounds'][0]['status'], 'success')
             self.assertEqual(result['reward_summary']['primary_metric_name'], 'swinir')
             self.assertEqual(result['reward_summary']['primary_metric'], 0.72)
+            self.assertEqual(result['reward_summary']['stage_score'], 6)
+            self.assertTrue(result['reward_summary']['passed'])
+            self.assertEqual(result['reward_summary']['repair_rounds_used'], 1)
+            self.assertEqual(result['strategy_delta']['previous_attempt_id'], 0)
             self.assertTrue((attempt_dir / 'candidate_loss_after_repair_round_1.py').exists())
             self.assertTrue((attempt_dir / 'agent_code_repair_response_round_1.json').exists())
+            self.assertEqual(
+                result['repair_rounds'][0]['artifacts']['repair_plan_path'],
+                str(attempt_dir / 'repair_plan_round_1.json'),
+            )
             self.assertEqual((attempt_dir / 'candidate_loss.py').read_text(encoding='utf-8'), repaired_code)
             self.assertEqual(
                 self._read_event_types(output_dir),

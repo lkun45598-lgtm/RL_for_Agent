@@ -78,6 +78,32 @@ class AgentEditWorkspaceTests(unittest.TestCase):
             self.assertTrue((output_code_path.parent / 'sandbox_overrides' / 'sandbox_trainer.py').exists())
             self.assertTrue((output_code_path.parent / 'sandbox_overrides' / 'models' / '__init__.py').exists())
 
+    def test_prepare_attempt_edit_workspace_keeps_additional_editable_targets_in_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_code_path = root / 'attempt_2' / 'candidate_loss.py'
+            repair_plan_path = output_code_path.parent / 'repair_plan_round_1.json'
+            repair_plan_path.parent.mkdir(parents=True, exist_ok=True)
+            repair_plan_path.write_text('{}\n', encoding='utf-8')
+
+            workspace = prepare_attempt_edit_workspace(
+                task_context={'integration_assessment': {'recommended_path': 'loss_only'}},
+                attempt_spec={'files_to_edit': ['candidate_loss.py']},
+                output_code_path=output_code_path,
+                additional_editable_targets=[
+                    {
+                        'path': str(repair_plan_path),
+                        'kind': 'repair_plan',
+                        'description': 'Structured repair plan sidecar.',
+                    }
+                ],
+            )
+
+            manifest = json.loads(Path(workspace['manifest_path']).read_text(encoding='utf-8'))
+            editable_paths = [item['path'] for item in manifest['editable_targets']]
+            self.assertIn(str(output_code_path), editable_paths)
+            self.assertIn(str(repair_plan_path), editable_paths)
+
     def test_load_existing_touched_paths_and_required_path_check(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             attempt_dir = Path(temp_dir)

@@ -31,22 +31,45 @@ pip install -r requirements.txt
 
 创建 `.env` 并填写：
 
-```bash
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
-```
-
-编辑 `.env` 文件：
-
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_BASE_URL=your-anthropic-endpoint
+LLM_PROVIDER=openai
+LLM_API_KEY=your-api-key
+LLM_MODEL_ID=your-model-id
+LLM_BASE_URL=your-provider-base-url
+LLM_API_MODE=chat
 KODE_API_SECRET=your-secret-key
-ANTHROPIC_MODEL_ID=your-model-id
 KODE_API_PORT=8787
 SKILLS_DIR=your-skills-directory
 PYTHON3=your-python3-path
 ```
+
+也可以直接使用 provider 专属变量：
+
+```env
+OPENAI_API_KEY=...
+OPENAI_MODEL_ID=gpt-4o
+OPENAI_BASE_URL=https://api.openai.com/v1
+
+# 或切回 Anthropic 协议
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL_ID=claude-sonnet-4-5-20250929
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+```
+
 `.env` 文件中的变量会被自动加载到 `process.env`。
+
+如需临时切换而不改 `.env`：
+
+```bash
+KODE_DISABLE_DOTENV=1 \
+LLM_PROVIDER=anthropic \
+LLM_API_KEY=... \
+LLM_MODEL_ID=claude-sonnet-4-5-20250929 \
+LLM_BASE_URL=https://api.anthropic.com \
+npm run start
+```
+
+如果只想保留 `.env` 作为默认值、允许 shell 环境覆盖,可设置 `KODE_DOTENV_OVERRIDE=0`。
 ### 3. 启动服务
 
 ```bash

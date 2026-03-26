@@ -292,6 +292,8 @@ def build_task_context(
             'loss_spec_path': str(loss_spec_path) if loss_spec_path.exists() else None,
             'trajectory_path': str(experiment_dir / 'trajectory.jsonl'),
             'analysis_plan_path': str(experiment_dir / 'analysis_plan.json'),
+            'decision_trace_path': str(experiment_dir / 'decision_trace.jsonl'),
+            'rl_dataset_path': str(experiment_dir / 'rl_decision_dataset.jsonl'),
         },
         'prepared_context': prepared_context,
         'paper_analysis': paper_analysis,
@@ -323,6 +325,13 @@ def build_task_context(
                     'files_to_edit': ['optional file paths the Agent expects to edit'],
                     'required_edit_paths': ['optional paths that must actually be modified in this attempt'],
                     'evidence_refs': ['task_context references supporting this attempt'],
+                    'strategy_delta': {
+                        'previous_attempt_id': 1,
+                        'why_previous_failed': 'why the last attempt failed',
+                        'what_changes_now': ['how this attempt differs'],
+                        'why_not_repeat_previous': 'why repeating the old strategy is low value',
+                        'expected_signal': 'what validation change should improve if this strategy is correct',
+                    },
                     'run_training': True,
                     'notes': 'Why this attempt should work',
                 }
@@ -335,6 +344,7 @@ def build_task_context(
             'If integration_assessment indicates adapter_wrapper or extend_model_outputs, modify the adapter/model path intentionally instead of hacking the loss.',
             'Treat loss_ir as optional supporting material, not the main brain of the system.',
             'If you output an agent_code attempt, include executable code, a concrete code_path, or a precise objective that a later Agent pass can turn into candidate_loss.py.',
+            'For follow-up attempts after a failure, explicitly record strategy_delta so later RL/controller logic can see why this attempt differs from the previous one.',
             'Record every attempt as analysis_plan.json + candidate_loss.py + result.json for later RL training.',
         ],
     }

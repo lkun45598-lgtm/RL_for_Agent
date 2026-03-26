@@ -21,6 +21,8 @@ class RunAutoExperimentTests(unittest.TestCase):
                 'task_context_path': '/tmp/task_context.json',
                 'loss_formula_path': '/tmp/loss_formula.json',
                 'loss_ir_path': '/tmp/loss_ir.yaml',
+                'decision_trace_path': '/tmp/decision_trace.jsonl',
+                'rl_dataset_path': '/tmp/rl_decision_dataset.jsonl',
             },
         }
 
@@ -41,6 +43,8 @@ class RunAutoExperimentTests(unittest.TestCase):
         self.assertEqual(result['task_context_path'], '/tmp/task_context.json')
         self.assertEqual(result['loss_formula_path'], '/tmp/loss_formula.json')
         self.assertEqual(result['loss_ir_path'], '/tmp/loss_ir.yaml')
+        self.assertEqual(result['decision_trace_path'], '/tmp/decision_trace.jsonl')
+        self.assertEqual(result['rl_dataset_path'], '/tmp/rl_decision_dataset.jsonl')
         mock_generate.assert_not_called()
 
     def test_auto_generate_plan_passes_generated_plan_into_agent_loop(self) -> None:

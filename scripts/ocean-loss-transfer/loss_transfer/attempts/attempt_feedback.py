@@ -69,6 +69,12 @@ def summarize_repair_rounds(repair_rounds: List[Dict[str, Any]]) -> List[Dict[st
                 'post_baseline_delta': round_info.get('post_baseline_delta'),
                 'reverted': bool(round_info.get('reverted', False)),
                 'agent_response_path': repair_payload.get('agent_response_path'),
+                'repair_plan_path': repair_payload.get('repair_plan_path'),
+                'repair_hypothesis': (
+                    (repair_payload.get('repair_plan_summary') or {}).get('failure_hypothesis')
+                    if isinstance(repair_payload.get('repair_plan_summary'), dict)
+                    else None
+                ),
             }
         )
     return summary

@@ -142,12 +142,22 @@ def _resolve_attempt_code(
         if isinstance(inline_code, str) and inline_code.strip():
             return inline_code, 'agent_code', None
 
+        objective = attempt_spec.get('objective')
+        has_objective = isinstance(objective, str) and objective.strip()
+        resolved_output_path = Path(output_code_path).expanduser().resolve() if output_code_path else None
+
         code_path = attempt_spec.get('code_path')
         if isinstance(code_path, str) and code_path.strip():
-            return Path(code_path).read_text(encoding='utf-8'), 'agent_code', None
+            candidate_path = Path(code_path).expanduser()
+            if not candidate_path.is_absolute() and resolved_output_path is not None:
+                candidate_path = resolved_output_path.parent / candidate_path
+            candidate_path = candidate_path.resolve()
+            if candidate_path.exists():
+                return candidate_path.read_text(encoding='utf-8'), 'agent_code', None
+            if not has_objective:
+                raise ValueError(f'agent_code code_path does not exist: {candidate_path}')
 
-        objective = attempt_spec.get('objective')
-        if isinstance(objective, str) and objective.strip():
+        if has_objective:
             if not task_context_path:
                 raise ValueError('agent_code objective requires task_context_path')
             if not output_code_path:
@@ -247,6 +257,7 @@ def _maybe_repair_candidate_code(
     *,
     attempt_spec: Dict[str, Any],
     source_kind: str,
+    round_number: int,
     stop_layer: Optional[str],
     failure_feedback: Dict[str, Any],
     task_context_path: Optional[str],
@@ -269,6 +280,7 @@ def _maybe_repair_candidate_code(
         attempt_spec=attempt_spec,
         output_code_path=str(code_path),
         failure_feedback=failure_feedback,
+        repair_plan_path=str(code_path.parent / f'repair_plan_round_{round_number}.json'),
         analysis_plan_path=analysis_plan_path,
         service_url=agent_service_url,
         api_key=agent_api_key,
@@ -496,6 +508,7 @@ def execute_attempt(
         repair_info = _maybe_repair_candidate_code(
             attempt_spec=attempt_spec,
             source_kind=source_kind,
+            round_number=round_number,
             stop_layer=stop_layer,
             failure_feedback=failure_feedback,
             task_context_path=task_context_path,
@@ -541,6 +554,16 @@ def execute_attempt(
                     repair_record,
                     key='repair_response_path',
                     path=response_snapshot_path,
+                )
+
+        repair_plan_path = repair_info.get('repair_plan_path') if isinstance(repair_info, dict) else None
+        if isinstance(repair_plan_path, str) and repair_plan_path.strip():
+            repair_plan_source = Path(repair_plan_path)
+            if repair_plan_source.exists():
+                _attach_repair_artifact(
+                    repair_record,
+                    key='repair_plan_path',
+                    path=repair_plan_source,
                 )
 
         post_repair_code_path = _snapshot_path(

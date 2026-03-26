@@ -47,6 +47,8 @@ def run_auto_experiment(
             'task_context_path': task_context.get('paths', {}).get('task_context_path'),
             'loss_formula_path': task_context.get('paths', {}).get('loss_formula_path'),
             'loss_ir_path': task_context.get('paths', {}).get('loss_ir_path'),
+            'decision_trace_path': task_context.get('paths', {}).get('decision_trace_path'),
+            'rl_dataset_path': task_context.get('paths', {}).get('rl_dataset_path'),
         }
 
     plan_generation: Optional[Dict[str, Any]] = None
