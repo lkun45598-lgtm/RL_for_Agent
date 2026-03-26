@@ -12,7 +12,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from agent_repair_loop import run_agent_repair_loop  # noqa: E402
+from loss_transfer.agent.agent_repair_loop import run_agent_repair_loop  # noqa: E402
 
 
 class AgentRepairLoopIntegrationTests(unittest.TestCase):
@@ -112,7 +112,7 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
                     },
                 }
 
-            with patch('attempt_executor.execute_attempt', side_effect=fake_execute_attempt):
+            with patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt):
                 result = run_agent_repair_loop(
                     task_context,
                     analysis_plan_path=str(input_plan_path),

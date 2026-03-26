@@ -12,7 +12,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from agent_artifact_generator import generate_candidate_loss, repair_candidate_loss  # noqa: E402
+from loss_transfer.agent.agent_artifact_generator import generate_candidate_loss, repair_candidate_loss  # noqa: E402
 
 
 class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
@@ -108,7 +108,7 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
                     )
                 return {'status': 'success', 'agent_id': 'stub-repair', 'text': 'repaired'}
 
-            with patch('agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat):
+            with patch('loss_transfer.agent.agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat):
                 generation = generate_candidate_loss(
                     task_context_path=str(bundle['task_context_path']),
                     attempt_spec=attempt_spec,
@@ -163,7 +163,7 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
                         )
                 return {'status': 'success', 'agent_id': 'stub-missing', 'text': 'generated without override'}
 
-            with patch('agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat):
+            with patch('loss_transfer.agent.agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat):
                 generation = generate_candidate_loss(
                     task_context_path=str(bundle['task_context_path']),
                     attempt_spec=attempt_spec,

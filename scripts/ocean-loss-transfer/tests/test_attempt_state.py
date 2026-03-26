@@ -10,7 +10,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from attempt_state import (  # noqa: E402
+from loss_transfer.attempts.attempt_state import (  # noqa: E402
     attach_repair_artifact,
     build_attempt_result,
     build_code_generation_failure_result,

@@ -10,7 +10,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from run_auto_experiment import run_auto_experiment  # noqa: E402
+from loss_transfer.orchestration.run_auto_experiment import run_auto_experiment  # noqa: E402
 
 
 class RunAutoExperimentTests(unittest.TestCase):
@@ -27,8 +27,8 @@ class RunAutoExperimentTests(unittest.TestCase):
     def test_context_only_returns_paths_without_running_agent_loop(self) -> None:
         task_context = self._task_context()
 
-        with patch('run_auto_experiment.build_task_context', return_value=task_context), patch(
-            'run_auto_experiment.generate_analysis_plan'
+        with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.generate_analysis_plan'
         ) as mock_generate:
             result = run_auto_experiment(
                 paper_slug='sea_raft',
@@ -56,11 +56,11 @@ class RunAutoExperimentTests(unittest.TestCase):
             'best_attempt_id': 1,
         }
 
-        with patch('run_auto_experiment.build_task_context', return_value=task_context), patch(
-            'run_auto_experiment.generate_analysis_plan',
+        with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.generate_analysis_plan',
             return_value=plan_generation,
         ) as mock_generate, patch(
-            'agent_repair_loop.run_agent_repair_loop',
+            'loss_transfer.agent.agent_repair_loop.run_agent_repair_loop',
             return_value=dict(loop_result),
         ) as mock_loop:
             result = run_auto_experiment(
@@ -92,10 +92,10 @@ class RunAutoExperimentTests(unittest.TestCase):
             'error': 'service unavailable',
         }
 
-        with patch('run_auto_experiment.build_task_context', return_value=task_context), patch(
-            'run_auto_experiment.generate_analysis_plan',
+        with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.generate_analysis_plan',
             return_value=plan_generation,
-        ), patch('agent_repair_loop.run_agent_repair_loop') as mock_loop:
+        ), patch('loss_transfer.agent.agent_repair_loop.run_agent_repair_loop') as mock_loop:
             result = run_auto_experiment(
                 paper_slug='sea_raft',
                 code_repo_path='/repo',

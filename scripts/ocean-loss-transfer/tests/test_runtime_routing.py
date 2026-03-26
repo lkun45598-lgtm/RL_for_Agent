@@ -10,7 +10,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from runtime_routing import (  # noqa: E402
+from loss_transfer.formula.runtime_routing import (  # noqa: E402
     FULL_RUN_MODEL_CONFIGS,
     MODEL_OUTPUT_EXTENSION_POLICY,
     build_runtime_routing_feedback,
@@ -24,7 +24,7 @@ from runtime_routing import (  # noqa: E402
 class RuntimeRoutingTests(unittest.TestCase):
     def test_formula_requires_sandbox_adapter_when_extra_variables_exist(self) -> None:
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={'extra_required_variables': ['weight'], 'requires_model_output_extension': False},
         ):
             self.assertTrue(formula_requires_sandbox_adapter({'symbol_map': {}}))
@@ -32,7 +32,7 @@ class RuntimeRoutingTests(unittest.TestCase):
 
     def test_formula_requires_model_output_extension_blocks_adapter_path(self) -> None:
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={'extra_required_variables': ['feat'], 'requires_model_output_extension': True},
         ):
             self.assertFalse(formula_requires_sandbox_adapter({'symbol_map': {}}))
@@ -40,12 +40,12 @@ class RuntimeRoutingTests(unittest.TestCase):
 
     def test_needs_temporary_runtime_config_covers_output_extension_and_dataset_root(self) -> None:
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={'extra_required_variables': [], 'requires_model_output_extension': True},
         ):
             self.assertTrue(needs_temporary_runtime_config({'symbol_map': {}}))
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={},
         ):
             self.assertTrue(needs_temporary_runtime_config(None, dataset_root='/tmp/data'))
@@ -53,7 +53,7 @@ class RuntimeRoutingTests(unittest.TestCase):
     def test_collect_model_output_extension_support_uses_lowercase_model_keys(self) -> None:
         touched = []
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={'requires_model_output_extension': True},
         ):
             support = collect_model_output_extension_support(
@@ -75,7 +75,7 @@ class RuntimeRoutingTests(unittest.TestCase):
 
     def test_build_runtime_routing_feedback_returns_policy_and_support_map(self) -> None:
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={'requires_model_output_extension': True},
         ):
             feedback = build_runtime_routing_feedback(
@@ -98,7 +98,7 @@ class RuntimeRoutingTests(unittest.TestCase):
 
     def test_build_runtime_routing_feedback_returns_none_when_not_needed(self) -> None:
         with patch(
-            'runtime_routing.analyze_formula_interface',
+            'loss_transfer.formula.runtime_routing.analyze_formula_interface',
             return_value={'requires_model_output_extension': False},
         ):
             feedback = build_runtime_routing_feedback(

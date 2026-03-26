@@ -9,7 +9,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from attempt_feedback import (  # noqa: E402
+from loss_transfer.attempts.attempt_feedback import (  # noqa: E402
     build_failure_feedback,
     compute_baseline_delta,
     extract_primary_metric,

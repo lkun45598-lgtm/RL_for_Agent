@@ -25,7 +25,7 @@ python scripts/ocean-loss-transfer/run_auto_experiment.py \
 python -c "
 import sys
 sys.path.insert(0, 'scripts/ocean-loss-transfer')
-from extract_loss_ir import extract_loss_ir
+from loss_transfer.ir.extract_loss_ir import extract_loss_ir
 extract_loss_ir(manual_mode=True, output_yaml_path='my_loss.yaml')
 "
 ```

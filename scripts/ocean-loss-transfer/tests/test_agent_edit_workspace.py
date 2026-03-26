@@ -11,7 +11,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from agent_edit_workspace import (  # noqa: E402
+from loss_transfer.agent.agent_edit_workspace import (  # noqa: E402
     check_required_edit_paths,
     load_existing_touched_paths,
     prepare_attempt_edit_workspace,

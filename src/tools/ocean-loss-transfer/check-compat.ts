@@ -32,8 +32,8 @@ export const oceanLossTransferCheckCompat = defineTool({
 
     const pyCode = [
       `import sys, yaml, json; sys.path.insert(0, "${scriptsDir}")`,
-      'from check_compatibility import check_compatibility',
-      'from loss_ir_schema import LossIR',
+      'from loss_transfer.ir.check_compatibility import check_compatibility',
+      'from loss_transfer.ir.loss_ir_schema import LossIR',
       `data = yaml.safe_load(open("${yamlArg}"))`,
       'loss_ir = LossIR(**data)',
       'result = check_compatibility(loss_ir)',

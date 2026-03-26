@@ -14,3 +14,5 @@ einops==0.8.1
 opencv-python==4.13.0.90
 netcdf4==1.7.4
 matplotlib==3.10.8
+PyMuPDF==1.27.2.2
+python-dotenv==1.2.2
