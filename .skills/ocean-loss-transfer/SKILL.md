@@ -1,136 +1,69 @@
 ---
 name: ocean-loss-transfer
-description: 论文 Loss 函数自动迁移 - Agent 分析代码 + 4层验证 + 5-trial 搜索
-version: 2.0.0
+description: 论文 Loss 自动迁移闭环 - 论文/代码联合分析、公式提取、analysis_plan、attempt 沙箱验证与修复
+version: 3.1.0
 author: Leizheng
-contributors: kongzhiquan
-last_modified: 2026-03-23
+contributors: Leizheng
+last_modified: 2026-03-26
 ---
-
-<!--
-Changelog:
-  - 2026-03-23 kongzhiquan: v2.1.0 指导agent寻找python路径
-    - 新增 python_manager.py 工具，动态解析 Python 可执行文件路径
-    - 更新文档，禁止在 bash 命令或脚本中硬编码 Python 路径
-  - 2026-03-23 Leizheng: v2.0.0 Agent-Native 提取
-    - 移除外部 LLM API 依赖
-    - Agent 直接分析代码生成 Loss IR
-    - 新增 prepare_context 和 write_ir 工具
-    - 文档重构：精简 SKILL.md + references/
-  - 2026-03-22 Leizheng: v1.0.0 初始版本
--->
 
 # Loss Transfer 技能
 
 ## 核心原则
 
-1. **Agent 直接分析**: 不依赖外部 API，Agent 自己读代码生成 Loss IR
-2. **渐进式验证**: 4层验证从轻到重，尽早淘汰坏 patch
-3. **已知失败拦截**: 基于 71 次实验，自动拦截 SSIM/Laplacian 等
-4. **自动化**: 实验完成后自动 git push
+1. **主证据源**：论文文本 + 代码上下文 + `loss_formula.json`，不要只靠单一公式或单一脚本猜测。
+2. **先判断接入路径，再写代码**：优先决定 `loss_only` / `adapter_wrapper` / `extend_model_outputs` / `model_surgery`。
+3. **模型级修改只在 attempt 沙箱副本里发生**：不要直接改 repo-root 训练或模型源码。
+4. **Loss IR 只是可选参考**：主流程是 `loss_formula.json + analysis_plan.json + orchestrate`，不是先写 IR。
 
 ---
 
-## 工作流程
-
-```
-用户提供代码仓库
-         ↓
-[准备上下文] ocean_loss_transfer_prepare_context
-         ↓
-Agent 分析代码
-         ↓
-Agent 生成 Loss IR YAML
-         ↓
-[写入验证] ocean_loss_transfer_write_ir
-         ↓
-[兼容性检查] ocean_loss_transfer_check_compat
-         ↓
-[5-Trial 搜索] ocean_loss_transfer_orchestrate
-         ↓
-每个 trial 通过 4 层验证
-         ↓
-[实验记录] + [Git Push]
-```
-
----
-
-## 可用工具
+## 主工具
 
 | 工具 | 用途 | 使用时机 |
 |------|------|----------|
-| `prepare_context` | 扫描代码，准备分析材料 | 开始提取 Loss IR |
-| `write_ir` | 验证并写入 Loss IR | Agent 生成 YAML 后 |
-| `check_compat` | 检查兼容性 | Loss IR 写入后 |
-| `validate` | 4层渐进式验证 | 测试单个 loss 文件 |
-| `orchestrate` | 5-trial 自动实验 | 开始完整实验 |
+| `ocean_loss_transfer_prepare_context` | 准备论文/代码上下文和输出路径 | 开始分析时 |
+| `ocean_loss_transfer_extract_formula` | 起草 `loss_formula.json` | 需要快速抽公式时 |
+| `ocean_loss_transfer_write_formula` | 校验并写入公式 spec | 公式确认后 |
+| `ocean_loss_transfer_orchestrate` | 主入口：执行 task context + analysis plan + attempt repair 闭环 | 公式和计划就绪后 |
+| `ocean_loss_transfer_validate` | 单独验证某个 candidate/attempt | 调试 patch 时 |
+| `ocean_loss_transfer_submit_code` | 手工提交一版候选 loss 做快速验证 | 人工探针或对照实验时 |
+
+可选旧路径工具：
+- `ocean_loss_transfer_write_ir`
+- `ocean_loss_transfer_check_compat`
+- `ocean_loss_transfer_extract`
 
 ---
 
-## 典型流程
+## 默认工作流
 
-### 场景 1: 完整自动化实验
-
-```typescript
-// Step 1: 准备上下文
-const context = await ocean_loss_transfer_prepare_context({
-  code_repo_path: "/path/to/paper/code",
-  paper_slug: "paper_name"
-})
-
-// Step 2: Agent 分析代码并生成 Loss IR YAML
-// （参考 context.analysis_guide）
-
-// Step 3: 写入并验证
-const result = await ocean_loss_transfer_write_ir({
-  yaml_content: "...",  // Agent 生成的 YAML
-  output_path: context.output_path
-})
-
-// Step 4: 开始实验
-await ocean_loss_transfer_orchestrate({
-  loss_ir_yaml: context.output_path,
-  paper_slug: "paper_name"
-})
+```text
+1. prepare_context
+2. extract_formula / write_formula
+3. Agent 编写 analysis_plan.json
+4. orchestrate
+5. 失败后按 stop_layer 修复
+6. 查看 trajectory.jsonl 和 agent_loop_summary.json
 ```
 
+默认只做这条主流程。只有在你明确需要补充结构化参考时，再去读 Loss IR 相关文档或工具。
+
 ---
 
-## 4 层验证
+## 何时读参考文档
 
-| 层级 | 时间 | 检查内容 |
+| 文档 | 内容 | 何时读取 |
 |------|------|----------|
-| Layer 1 - Static | <1s | AST + 签名 + import 白名单 |
-| Layer 2 - Smoke | <10s | dummy forward/backward + NaN 检查 |
-| Layer 3 - Single | ~2min | SwinIR 训练 + SSIM > 0.3 |
-| Layer 4 - Full | ~5min | 4 模型并行 + 基线对比 |
-
----
-
-## Python 路径解析
-
-**禁止在任何 bash 命令中硬编码 Python 路径**（如 `/home/lz/miniconda3/envs/pytorch/bin/python`）。
-
-需要调用 Python 时，使用 `python_manager.py` 动态解析：
-
-```bash
-# 查找含 torch 的 Python（训练脚本必须用这个）
-python3 scripts/python_manager.py --module torch
-# 输出: Python with module "torch": /home/.../bin/python
-
-# 查找第一个可用 Python
-python3 scripts/python_manager.py
-```
-
-在 Python 脚本中导入：
-
-```python
-import sys
-sys.path.append('scripts') # 路径根据实际情况调整
-from python_manager import find_first_python_path, find_python_with_module
-
-PYTHON = find_python_with_module('torch') or find_first_python_path() or 'python3'
-```
+| `references/workflow-detail.md` | 完整闭环和关键产物 | 需要看全流程时 |
+| `references/extraction-guide.md` | 如何从论文+代码提公式并收集证据 | 写 `loss_formula.json` 时 |
+| `references/analysis-plan.md` | `analysis_plan.json` 结构与样例 | 写计划时 |
+| `references/integration-paths.md` | 4 种 integration path 的判断规则 | 不确定该改哪一层时 |
+| `references/validation-layers.md` | Layer 1-4 验证解释 | 看 stop_layer 时 |
+| `references/known-failures.md` | 已知不稳定 loss 模式 | 做数值稳定性判断时 |
+| `references/trial-strategies.md` | attempt 设计与 repair 试探策略 | 设计多轮尝试时 |
+| `references/troubleshooting.md` | 常见故障排查 | 出现异常时 |
+| `references/loss-ir-schema.md` | Loss IR schema | 只有在明确要写 IR 时 |
 
 ---
 
@@ -138,30 +71,7 @@ PYTHON = find_python_with_module('torch') or find_first_python_path() or 'python
 
 | 类别 | 禁止行为 |
 |------|----------|
-| **Loss IR 生成** | 跳过 prepare_context，直接猜测代码结构 |
-| **验证** | 跳过 write_ir 验证，直接写入文件 |
-| **实验** | 手动修改 sandbox_loss.py，绕过工具 |
-| **Python 路径** | 在 bash 命令或脚本中硬编码 Python 可执行文件路径 |
-
----
-
-## 参考文档索引
-
-详细信息请按需读取以下文档：
-
-| 文档 | 内容 | 何时读取 |
-|------|------|----------|
-| `references/extraction-guide.md` | Agent 如何分析代码 | 生成 Loss IR 时 |
-| `references/loss-ir-schema.md` | Loss IR 完整 schema | 填写 YAML 时 |
-| `references/known-failures.md` | 71 次实验失败模式 | 遇到失败时 |
-| `references/validation-layers.md` | 4 层验证详解 | 验证失败时 |
-| `references/trial-strategies.md` | 5-trial 策略说明 | 理解实验流程时 |
-| `references/troubleshooting.md` | 故障排除 | 遇到错误时 |
-
----
-
-## 性能基线
-
-当前最优 (exp#41):
-- **SwinIR**: 0.6645（目标指标）
-- **验收标准**: 新 loss 的 SwinIR SSIM >= 0.6545（baseline - 1σ）
+| **路径判断** | 看到额外张量需求仍强行走 `loss_only` |
+| **代码修改** | 直接改 repo-root 的训练或模型源码 |
+| **流程执行** | 跳过公式校验，直接写候选代码 |
+| **环境** | 在 skill 指令里硬编码 Python 路径 |

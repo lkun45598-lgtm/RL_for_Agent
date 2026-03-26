@@ -28,8 +28,8 @@ class LossComponent:
     type: str  # pixel_loss | gradient_loss | frequency_loss | ...
     weight: float
     implementation: ComponentImplementation
-    required_tensors: List[str]
-    required_imports: List[str]
+    required_tensors: List[str] = field(default_factory=list)
+    required_imports: List[str] = field(default_factory=list)
     formula: str = ""
     code_evidence: Dict[str, str] = field(default_factory=dict)
 

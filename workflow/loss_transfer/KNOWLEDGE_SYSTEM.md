@@ -251,7 +251,7 @@ innovations:
 
 ## 与 Loss Transfer 的集成
 
-知识积累系统已集成到 `orchestrate_trials.py`:
+知识积累系统现在应挂到 `agent_repair_loop.py` / `trajectory.jsonl` 这一层:
 - 实验完成 → 自动提取创新点
 - 最佳 trial → 自动泛化代码
 - 全部推送到 GitHub

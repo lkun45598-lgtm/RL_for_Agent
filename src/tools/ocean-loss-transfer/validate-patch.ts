@@ -10,16 +10,18 @@
  */
 
 import { defineTool } from '@shareai-lab/kode-sdk';
-import { findFirstPythonPath } from '@/utils/python-manager';
+import { findFirstPythonPath, findPythonWithModule } from '@/utils/python-manager';
 import { shellEscapeDouble } from '@/utils/shell';
 import path from 'node:path';
 
 export const oceanLossTransferValidate = defineTool({
   name: 'ocean_loss_transfer_validate',
-  description: '验证 loss 文件 (4层: static/smoke/single/full)',
+  description: '验证 candidate loss 或 attempt 产物（4层: static/smoke/single/full）',
 
   params: {
     loss_file_path: { type: 'string', description: 'Loss 文件路径' },
+    formula_spec_path: { type: 'string', description: 'loss_formula.json 路径（可选）', required: false },
+    dataset_root: { type: 'string', description: '训练/验证数据根目录（single/full 可选）', required: false },
     mode: {
       type: 'string',
       description: '验证层级',
@@ -28,7 +30,7 @@ export const oceanLossTransferValidate = defineTool({
   },
 
   async exec (args, ctx) {
-    const pythonPath = await findFirstPythonPath();
+    const pythonPath = (await findPythonWithModule('torch')) ?? await findFirstPythonPath();
     if (!pythonPath) throw new Error('未找到可用的Python解释器');
     const python = `"${shellEscapeDouble(pythonPath)}"`;
     const scriptPath = path.resolve(process.cwd(), 'scripts/ocean-loss-transfer/validate_loss.py');
@@ -36,7 +38,13 @@ export const oceanLossTransferValidate = defineTool({
     const mode = shellEscapeDouble(args.mode);
 
     const result = await ctx.sandbox.exec(
-      `${python} "${shellEscapeDouble(scriptPath)}" --loss_file "${lossFile}" --mode "${mode}"`
+      [
+        `${python} "${shellEscapeDouble(scriptPath)}"`,
+        `--loss_file "${lossFile}"`,
+        `--mode "${mode}"`,
+        args.formula_spec_path ? `--formula_spec "${shellEscapeDouble(args.formula_spec_path)}"` : '',
+        args.dataset_root ? `--dataset_root "${shellEscapeDouble(args.dataset_root)}"` : '',
+      ].filter(Boolean).join(' ')
     );
 
     if (result.code !== 0) throw new Error(`validate_loss 失败: ${result.stderr}`);

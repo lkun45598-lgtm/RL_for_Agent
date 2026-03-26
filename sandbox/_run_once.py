@@ -30,6 +30,14 @@ _PIPELINE_DIR = os.path.abspath(_PIPELINE_DIR)
 if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 
+# 允许 loss-transfer attempt 提供局部 sandbox 覆盖文件。
+# 必须放在训练管线路径之后再插到最前面，确保 override 真正优先于模板库。
+_OVERRIDE_DIR = os.environ.get('SANDBOX_OVERRIDE_DIR', '').strip()
+if _OVERRIDE_DIR:
+    _OVERRIDE_DIR = os.path.abspath(_OVERRIDE_DIR)
+    if os.path.isdir(_OVERRIDE_DIR) and _OVERRIDE_DIR not in sys.path:
+        sys.path.insert(0, _OVERRIDE_DIR)
+
 from utils.helper import set_up_logger, set_seed, load_config, save_config
 from sandbox_trainer import SandboxTrainer
 

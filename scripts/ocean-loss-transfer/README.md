@@ -31,19 +31,21 @@
         ↓
    [Step 2] 兼容性检查 (CompatibilityResult)
         ↓
-   [Step 3] 生成 5 个 Trial 规格 (PatchSpec × 5)
+   [Step 3] 构建 Task Context (task_context.json)
         ↓
-   [Step 4] 逐一执行 Trial
-     ├─ 模板模式 (Trial 1-3): patch_templates → sandbox_loss.py
-     └─ LLM 生成模式 (Trial 4-5): LLM → sandbox_loss.py + 多轮修复
+   [Step 4] Agent 生成 Analysis Plan (analysis_plan.json)
         ↓
-   [Step 5] 4 层渐进式验证 (ValidationResult)
+   [Step 5] 逐一执行 Attempt
+     ├─ formula_variant: formula_code_generator → candidate_loss.py
+     └─ agent_code: Agent 直接提交代码
+        ↓
+   [Step 6] 4 层渐进式验证 (ValidationResult)
      Layer 1: 静态检查 (<1s)
      Layer 2: Smoke Test (<10s)
      Layer 3: Single Model (2-5min)
      Layer 4: Full Run, 4 模型 (5-10min)
         ↓
-   [Step 6] 优选最佳 Trial (ExperimentSummary)
+   [Step 7] 轨迹记录与优选最佳 Attempt (ExperimentSummary)
         ↓
    [Step 7] 提取创新点 (Innovation) → 泛化代码 → git push
 ```
@@ -149,75 +151,50 @@ class CompatibilityResult(TypedDict, total=False):
 
 ---
 
-### Step 3 — 生成 Trial 规格
+### Step 3 — 构建 Task Context
 
-**模块**: `orchestrate_trials.py → generate_trial_specs()`
+**模块**: `context_builder.py`
 
-**输入**: `LossIRLike`（`LossIR` 或 `LossIRDict`）
+**输入**: 论文 PDF、论文代码仓库、已有 `loss_ir.yaml`（可选）
 
 **处理过程**
 
-从 Loss IR 的 `components` 中解析三类组件（pixel / gradient / frequency），并据此选择模板变体和权重：
+1. 复用 `prepare_context.py` 扫描论文代码中的 loss 相关上下文
+2. 若 `loss_formula.json` 不存在，则调用 `extract_loss_formula.py` 生成公式草稿
+3. 加载 `loss_ir.yaml`，运行 `check_compatibility.py`
+4. 汇总为单一的 `task_context.json`
 
-| 信息来源 | 推断内容 |
-|---------|---------|
-| `pixel_comps[0].implementation.reduction` | `PixelVariant`: `'abs_l1'` / `'smooth_l1'` / `'rel_l2'` |
-| `gradient_comps[0].name` | `GradientVariant`: `'sobel_3x3'` / `'scharr_3x3'` |
-| `freq_comps[0].name` | `FFTVariant`: `'amplitude_diff'` / `'residual_rfft2_abs'` |
-| 各类组件的 `weight` 之和 | `alpha` / `beta` / `gamma` |
+**输出**
 
-**输出**: 5 个 `PatchSpec` 的列表
-
-```python
-# Trial 1-3: 模板模式
-class TemplatePatchSpec(TypedDict, total=False):
-    name:              str
-    pixel_variant:     PixelVariant     # 'rel_l2' | 'abs_l1' | 'smooth_l1'
-    gradient_variant:  GradientVariant  # 'sobel_3x3' | 'scharr_3x3'
-    fft_variant:       FFTVariant       # 'residual_rfft2_abs' | 'amplitude_diff'
-    scales:            List[int]        # e.g. [1, 2, 4]
-    scale_weights:     List[float]      # e.g. [0.5, 0.3, 0.2]
-    alpha: float  # pixel 权重
-    beta:  float  # gradient 权重
-    gamma: float  # fft 权重
-
-# Trial 4-5: LLM 生成模式
-class LLMPatchSpec(TypedDict):
-    name:     str
-    mode:     Literal['llm_generate']
-    strategy: GenerationStrategy  # 'faithful' | 'creative'
-
-PatchSpec = Union[TemplatePatchSpec, LLMPatchSpec]
-```
-
-固定的 5 个策略：
-
-| Trial | 名称 | 模式 | 核心差异 |
-|-------|------|------|---------|
-| 1 | IR-Driven Faithful | 模板 | 由 IR 推断的最忠实组合 |
-| 2 | Normalization Aligned | 模板 | 固定 abs_l1，均等权重 |
-| 3 | Numerical Stabilized | 模板 | smooth_l1 + amplitude_diff |
-| 4 | Paper Faithful | LLM | faithful 策略直接生成 |
-| 5 | Paper Creative | LLM | creative 策略融合多尺度 |
+- `task_context.json`: Agent 分析入口
+- `loss_formula.json`: LaTeX / params / symbol_map
+- `loss_spec.yaml`: loss 规格草稿
+- `analysis_plan.json` 路径约定
 
 ---
 
-### Step 4 — 执行 Trial
+### Step 4 — 执行 Attempt
 
-**模块**: `run_trial.py`
+**模块**: `attempt_executor.py`
 
 **输入**
 
 | 参数 | 类型 |
 |------|------|
-| `loss_ir` | `LossIRLike` |
-| `patch_spec` | `PatchSpec` |
-| `trial_id` | `int` |
+| `attempt_spec` | `Dict[str, Any]` |
+| `attempt_id` | `int` |
 | `paper_slug` | `str` |
 
-#### 模板模式 (Trial 1-3)
+#### 支持的 Attempt 类型
 
-`patch_templates.py` 将 `TemplatePatchSpec` 中的变体名组装成完整的 `sandbox_loss.py` 代码，写入临时文件后进入 **完整 4 层验证**。
+1. `agent_code`: Agent 直接提交 `candidate_loss.py`
+2. `formula_variant`: 对 `loss_formula.json` 使用确定性公式代码生成（如 `faithful` / `stabilized`）
+
+执行层本身不做“枚举修补”，只负责：
+- 写入候选代码
+- 跑 static / smoke / formula-alignment
+- 按需跑 Layer 3 / 4 训练
+- 记录结果和奖励摘要
 
 代码结构固定为：
 ```
@@ -228,7 +205,7 @@ _align_mask() + _downsample() + _downsample_mask()
 + sandbox_loss()     ← multi-scale 主函数
 ```
 
-#### LLM 生成模式 (Trial 4-5) (暂时禁止，后续开放)
+#### LLM 生成模式（保留为代码生成器，不再作为固定 Trial 枚举）
 
 **模块**: `llm_code_generator.py`
 
@@ -291,13 +268,20 @@ class TrainingMetrics(TypedDict, total=False):
 
 ### Step 6 — 结果优选与记录
 
-**模块**: `orchestrate_trials.py` + `experiment_recorder.py`
+**模块**: `agent_repair_loop.py` + `trajectory_logger.py`
 
-每个 Trial 完成后，`record_trial()` 将以下内容写入 `sandbox/loss_transfer_experiments/{paper_slug}/trial_{N}/`：
-- `sandbox_loss.py` — 生成的 loss 文件副本
-- `result.yaml` — patch 规格 + 各层验证结果
+每个 Attempt 完成后，系统会写入 `sandbox/loss_transfer_experiments/{paper_slug}/attempt_{N}/`：
+- `candidate_loss.py` — 当前候选 loss
+- `attempt_spec.json` — Agent 的动作描述
+- `result.json` — 分层验证结果 + 指标 + baseline delta
 
-5 个 Trial 全部完成后，汇总最终结果：
+全流程还会持续写入：
+- `task_context.json`
+- `analysis_plan.json`
+- `trajectory.jsonl`
+- `agent_loop_summary.json`
+
+最终 summary 结构保持“最优候选 + 全部尝试列表”的形式：
 
 ```python
 class ExperimentSummary(TypedDict, total=False):
@@ -323,7 +307,7 @@ class BaselineThresholds(TypedDict, total=False):
     improvement_threshold: float  # ssim_mean + ssim_std
 ```
 
-`summary.yaml` 写入 `sandbox/loss_transfer_experiments/{paper_slug}/`。
+`agent_loop_summary.json` 写入 `sandbox/loss_transfer_experiments/{paper_slug}/`。
 
 ---
 
@@ -430,13 +414,14 @@ scripts/ocean-loss-transfer/
 ├── extract_loss_ir.py         # Step 1: 扫描代码 + LLM 提取
 ├── llm_extractor.py           # LLM API 调用
 ├── check_compatibility.py     # Step 2: 兼容性检查
-├── orchestrate_trials.py      # Step 3+6: 生成规格 + 编排 5 trials
-├── run_trial.py               # Step 4: 单 trial 执行 (模板/LLM 双模式)
+├── context_builder.py         # Step 3: 构建 task_context.json
+├── attempt_executor.py        # Step 4: 执行单个 Agent attempt
+├── agent_repair_loop.py       # Step 6: analysis_plan 驱动闭环
 ├── llm_code_generator.py      # LLM 生成 + 多轮修复
 ├── patch_templates.py         # 模板代码片段 + assemble_sandbox_loss()
 ├── generate_patch.py          # TemplatePatchSpec → sandbox_loss.py
 ├── validate_loss.py           # Step 5: 4 层验证器
-├── experiment_recorder.py     # Trial 结果落盘
+├── trajectory_logger.py       # task / attempt / result 轨迹落盘
 ├── innovation_extractor.py    # Step 7: 创新点提取
 ├── code_generalizer.py        # Step 7: 代码泛化为 nn.Module
 ├── knowledge_db.py            # 知识库 CRUD
@@ -451,11 +436,14 @@ sandbox/
 ├── run_all_models.sh          # 4 模型并行训练脚本
 └── loss_transfer_experiments/
     └── {paper_slug}/
-        ├── loss_ir.yaml       # 提取的 Loss IR
-        ├── summary.yaml       # 最终实验汇总
-        └── trial_{N}/
-            ├── sandbox_loss.py
-            └── result.yaml
+        ├── loss_ir.yaml             # 提取的 Loss IR
+        ├── task_context.json        # Agent 分析入口
+        ├── analysis_plan.json       # Agent 的动作计划
+        ├── trajectory.jsonl         # 结构化闭环轨迹
+        ├── agent_loop_summary.json  # 最终实验汇总
+        └── attempt_{N}/
+            ├── candidate_loss.py
+            └── result.json
 
 workflow/loss_transfer/
 ├── baseline_thresholds.yaml   # 基线 SSIM 统计 (BaselineThresholds)

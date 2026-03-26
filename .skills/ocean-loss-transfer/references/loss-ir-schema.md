@@ -1,6 +1,16 @@
 # Loss IR Schema 说明
 
-完整的 Loss IR 数据结构定义。
+完整的 Loss IR 数据结构定义。只有在你明确需要写 `loss_ir.yaml` 作为补充参考时再读。
+
+## 目录
+
+- 顶层结构
+- metadata
+- interface
+- components
+- multi_scale
+- combination
+- incompatibility_flags
 
 ---
 

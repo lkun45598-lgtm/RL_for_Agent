@@ -1,0 +1,21 @@
+# Example loss config for the original ocean SR training pipeline.
+# Add this top-level `loss:` block to a trainer config.
+
+loss:
+  mode: spec_driven
+  recipe: masked_mixture_laplace_nll
+  params:
+    use_var: true
+    var_min: 0.0
+    var_max: 10.0
+    weight_clip: 12.0
+    log_b_clip: 6.0
+    aux_reg: 1.0e-4
+    eps: 1.0e-6
+  bindings:
+    pred: pred
+    target: target
+    mask: mask
+    weight: loss_inputs.weight
+    log_b: loss_inputs.log_b
+

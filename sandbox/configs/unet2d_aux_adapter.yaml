@@ -1,0 +1,66 @@
+data:
+  dataset_root: /data1/user/lz/SR_data_process/demo8
+  dyn_vars:
+  - uo
+  - vo
+  eval_batchsize: 2
+  model_divisor: 16
+  name: OceanNPY
+  normalize: true
+  normalizer_type: PGN
+  num_workers: 2
+  patch_size: 128
+  sample_factor: 4
+  shape:
+  - 1440
+  - 2160
+  train_batchsize: 2
+log:
+  log: true
+  log_dir: /data1/user/lz/RL_for_Agent/sandbox/runs/UNet2d_aux_adapter
+  verbose: true
+  wandb: false
+  wandb_project: ''
+model:
+  in_channels: 2
+  init_features: 64
+  name: UNet2d
+  out_channels: 2
+  scale_factor: 4
+optimize:
+  lr: 0.001
+  optimizer: AdamW
+  weight_decay: 0.001
+sandbox_adapter:
+  enabled: true
+  hidden_channels: 32
+  heads:
+    weight:
+      out_channels: 2
+      activation: none
+      bias_init: 0.0
+    log_b:
+      out_channels: 2
+      activation: none
+      bias_init: -1.0
+schedule:
+  gamma: 0.5
+  scheduler: StepLR
+  step_size: 300
+train:
+  ckpt_freq: 100
+  ckpt_max: 1
+  cuda: true
+  device: 0
+  device_ids:
+  - 0
+  distribute: false
+  distribute_mode: DDP
+  epochs: 15
+  eval_freq: 5
+  load_ckpt: false
+  patience: -1
+  random_seed: 42
+  saving_best: true
+  saving_ckpt: false
+  use_amp: false

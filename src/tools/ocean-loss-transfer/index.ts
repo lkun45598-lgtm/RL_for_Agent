@@ -7,20 +7,27 @@
  *
  * @changelog
  *   - 2026-03-23 Leizheng: 新增 prepare-context 和 write-ir 工具
+ *   - 2026-03-24 Leizheng: 新增 submit-code 工具 (Agent-Native 代码提交)
  */
 
 import { oceanLossTransferValidate } from './validate-patch';
 import { oceanLossTransferExtract } from './extract';
+import { oceanLossTransferExtractFormula } from './extract-formula';
 import { oceanLossTransferCheckCompat } from './check-compat';
 import { oceanLossTransferOrchestrate } from './orchestrate';
 import { oceanLossTransferPrepareContext } from './prepare-context';
 import { oceanLossTransferWriteIr } from './write-ir';
+import { oceanLossTransferWriteFormula } from './write-formula';
+import { oceanLossTransferSubmitCode } from './submit-code';
 
 export const oceanLossTransferTools = [
   oceanLossTransferPrepareContext,
   oceanLossTransferWriteIr,
+  oceanLossTransferWriteFormula,
+  oceanLossTransferExtractFormula,
   oceanLossTransferValidate,
   oceanLossTransferExtract,
   oceanLossTransferCheckCompat,
-  oceanLossTransferOrchestrate
+  oceanLossTransferOrchestrate,
+  oceanLossTransferSubmitCode,
 ];

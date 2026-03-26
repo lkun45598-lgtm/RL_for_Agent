@@ -158,6 +158,9 @@ app.get('/health', async (req: Request, res: Response) => {
     status: 'ok',
     service: 'kode-agent-service',
     sdk: 'kode-sdk',
+    provider: config.provider,
+    model: config.modelId,
+    apiMode: config.provider === 'openai' ? config.openaiApiMode : undefined,
     timestamp: Date.now(),
     conversations: stats,
   })

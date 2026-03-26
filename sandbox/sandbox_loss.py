@@ -1,100 +1,151 @@
-"""
-@file sandbox_loss.py
-@description Experiment #71: multi-scale rel L2 + partial-scale gradient + residual FFT
-    Gradient loss computed only at scale=1 and scale=2 (skip scale=4).
-    Rel L2 still at all 3 scales [1,2,4].
-    Hypothesis: scale=4 gradient is too coarse to be useful.
-    alpha=0.5, beta=0.3, gamma=0.2, scale_weights=[0.5,0.3,0.2]
-@version 1.71.0
-"""
-
+import math
 import torch
 import torch.nn.functional as F
 
-
-def _align_mask(mask, pred):
-    if mask is None:
-        return None
-    H, W = pred.shape[1], pred.shape[2]
-    Hm, Wm = mask.shape[1], mask.shape[2]
-    if Hm == H and Wm == W:
-        return mask
-    m = mask.permute(0, 3, 1, 2).float()
-    m = F.interpolate(m, size=(H, W), mode='nearest')
-    return m.permute(0, 2, 3, 1).bool()
+MAX_FLOW = 400.0
+gamma = 0.85
+var_min = 0.0
+var_max = 10.0
+epsilon = 1e-8
 
 
-def _downsample(x, scale):
-    if scale == 1:
+def _ensure_bhwc(x):
+    if not torch.is_tensor(x):
+        raise TypeError("tensor expected")
+    if x.ndim != 4:
+        raise ValueError("Expected 4D BHWC tensor")
+    if x.shape[-1] <= 8:
         return x
-    B, H, W, C = x.shape
-    t = x.permute(0, 3, 1, 2)
-    t = F.avg_pool2d(t, kernel_size=scale, stride=scale)
-    return t.permute(0, 2, 3, 1)
+    if x.shape[1] <= 8:
+        return x.permute(0, 2, 3, 1).contiguous()
+    raise ValueError("Unable to infer BHWC layout")
 
 
-def _downsample_mask(mask, scale):
-    if mask is None or scale == 1:
-        return mask
-    m = mask.permute(0, 3, 1, 2).float()
-    m = F.avg_pool2d(m, kernel_size=scale, stride=scale)
-    return (m > 0.5).permute(0, 2, 3, 1)
+def _ensure_mask_bhw(mask, ref):
+    if mask is None:
+        return torch.ones(ref.shape[0], ref.shape[1], ref.shape[2], dtype=ref.dtype, device=ref.device)
+    if not torch.is_tensor(mask):
+        raise TypeError("mask must be tensor or None")
+    if mask.ndim == 4:
+        if mask.shape[-1] == 1:
+            mask = mask[..., 0]
+        elif mask.shape[1] == 1:
+            mask = mask[:, 0]
+        else:
+            mask = mask.mean(dim=-1) if mask.shape[-1] <= 4 else mask.mean(dim=1)
+    if mask.ndim != 3:
+        raise ValueError("mask must broadcast to BHW")
+    return mask.to(dtype=ref.dtype, device=ref.device)
 
 
-def _rel_l2(pred, target, mask=None):
-    B = pred.size(0)
-    pf = pred.reshape(B, -1)
-    tf = target.reshape(B, -1)
-    mf = mask.expand_as(pred).reshape(B, -1).float() if mask is not None else torch.ones_like(pf)
-    diff = (pf - tf) * mf
-    ym = tf * mf
-    return (torch.norm(diff, 2, dim=1) / torch.norm(ym, 2, dim=1).clamp(min=1e-8)).sum()
+def _fetch_loss_input(kwargs, name):
+    if name in kwargs and torch.is_tensor(kwargs[name]):
+        return kwargs[name]
+    loss_inputs = kwargs.get("loss_inputs", {})
+    if isinstance(loss_inputs, dict) and torch.is_tensor(loss_inputs.get(name)):
+        return loss_inputs.get(name)
+    return None
 
 
-def _gradient_loss(pred, target, mask=None):
-    B, H, W, C = pred.shape
-    p = pred.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    t = target.permute(0, 3, 1, 2).reshape(B * C, 1, H, W)
-    sx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    sy = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
-                      dtype=pred.dtype, device=pred.device).view(1, 1, 3, 3)
-    diff = (torch.abs(F.conv2d(p, sx, padding=1) - F.conv2d(t, sx, padding=1)) +
-            torch.abs(F.conv2d(p, sy, padding=1) - F.conv2d(t, sy, padding=1)))
-    diff = diff.reshape(B, C, H, W).permute(0, 2, 3, 1)
-    if mask is not None:
-        mf = mask.expand_as(diff).float()
-        return (diff * mf).sum() / mf.sum().clamp(min=1.0)
-    return diff.mean()
+def _align_param(x, batch, height, width, channels, name):
+    x = _ensure_bhwc(x)
+    if x.shape[0] != batch or x.shape[1] != height or x.shape[2] != width:
+        raise ValueError(name + " shape mismatch")
+    if x.shape[-1] == 1 and channels > 1:
+        x = x.expand(batch, height, width, channels)
+    elif x.shape[-1] != channels:
+        raise ValueError(name + " channel mismatch")
+    return x
 
 
-def _fft_loss(pred, target):
-    residual = (pred - target).float().permute(0, 3, 1, 2)
-    fft_r = torch.fft.rfft2(residual, norm='ortho')
-    return fft_r.abs().mean().to(pred.dtype)
+def _extract_prediction_sequence(pred):
+    if torch.is_tensor(pred):
+        return [_ensure_bhwc(pred)]
+    if isinstance(pred, (list, tuple)):
+        seq = []
+        for item in pred:
+            if torch.is_tensor(item):
+                seq.append(_ensure_bhwc(item))
+            elif isinstance(item, dict):
+                candidate = item.get("pred", item.get("prediction", item.get("output")))
+                if torch.is_tensor(candidate):
+                    seq.append(_ensure_bhwc(candidate))
+        if seq:
+            return seq
+    if isinstance(pred, dict):
+        if isinstance(pred.get("flow"), (list, tuple)):
+            seq = []
+            for item in pred["flow"]:
+                if torch.is_tensor(item):
+                    seq.append(_ensure_bhwc(item))
+            if seq:
+                return seq
+        candidate = pred.get("pred", pred.get("prediction", pred.get("output")))
+        if torch.is_tensor(candidate):
+            return [_ensure_bhwc(candidate)]
+    raise TypeError("Unsupported pred container")
 
 
-def sandbox_loss(pred, target, mask=None,
-                 alpha=0.5, beta=0.3, gamma=0.2,
-                 scale_weights=None, **kwargs):
-    if scale_weights is None:
-        scale_weights = [0.5, 0.3, 0.2]
-    mask = _align_mask(mask, pred)
-    B = pred.size(0)
-    scales = [1, 2, 4]
-    grad_scales = [1, 2]  # gradient only at fine scales
-    grad_weights = [0.6, 0.4]  # renormalized weights for 2 scales
-    loss_rel = pred.new_zeros(1).squeeze()
-    loss_grad = pred.new_zeros(1).squeeze()
-    for s, sw in zip(scales, scale_weights):
-        ps = _downsample(pred, s)
-        ts = _downsample(target, s)
-        ms = _downsample_mask(mask, s)
-        loss_rel = loss_rel + sw * _rel_l2(ps, ts, ms)
-    for s, sw in zip(grad_scales, grad_weights):
-        ps = _downsample(pred, s)
-        ts = _downsample(target, s)
-        ms = _downsample_mask(mask, s)
-        loss_grad = loss_grad + sw * _gradient_loss(ps, ts, ms) * B
-    loss_fft = _fft_loss(pred, target) * B
-    return alpha * loss_rel + beta * loss_grad + gamma * loss_fft
+def _extract_sequence_param(source, name, length):
+    if torch.is_tensor(source):
+        return [source for _ in range(length)]
+    if isinstance(source, (list, tuple)):
+        tensors = [item for item in source if torch.is_tensor(item)]
+        if len(tensors) == length:
+            return tensors
+        if len(tensors) == 1:
+            return tensors * length
+    if isinstance(source, dict):
+        value = source.get(name)
+        if torch.is_tensor(value):
+            return [value for _ in range(length)]
+        if isinstance(value, (list, tuple)):
+            tensors = [item for item in value if torch.is_tensor(item)]
+            if len(tensors) == length:
+                return tensors
+            if len(tensors) == 1:
+                return tensors * length
+    return None
+
+
+def _mol_nll(pred, target, weight, log_b, valid_mask):
+    abs_diff = (target - pred).abs()
+    log_b = torch.clamp(log_b, min=var_min, max=var_max)
+    alpha = torch.sigmoid(weight)
+    ordinary = torch.log(alpha.clamp_min(epsilon)) - math.log(2.0) - abs_diff
+    ambiguous = torch.log((1.0 - alpha).clamp_min(epsilon)) - math.log(2.0) - log_b - abs_diff * torch.exp(-log_b)
+    component_log_prob = torch.logsumexp(torch.stack([ordinary, ambiguous], dim=-1), dim=-1)
+    per_pixel = -component_log_prob.mean(dim=-1)
+    masked = per_pixel * valid_mask
+    denom = valid_mask.sum().clamp_min(1.0)
+    return masked.sum() / denom
+
+
+def sandbox_loss(pred, target, mask=None, **kwargs):
+    pred_seq = _extract_prediction_sequence(pred)
+    target = _ensure_bhwc(target)
+    batch, height, width, channels = target.shape
+    mag = torch.sqrt(torch.sum(target * target, dim=-1))
+    valid_mask = _ensure_mask_bhw(mask, target)
+    valid_mask = (valid_mask > 0.5).to(dtype=target.dtype) * (mag < MAX_FLOW).to(dtype=target.dtype)
+
+    weight = _fetch_loss_input(kwargs, "weight")
+    log_b = _fetch_loss_input(kwargs, "log_b")
+    if weight is None or log_b is None:
+        raise ValueError("weight and log_b are required")
+
+    weight_seq = _extract_sequence_param(weight, "weight", len(pred_seq))
+    log_b_seq = _extract_sequence_param(log_b, "log_b", len(pred_seq))
+    if weight_seq is None or log_b_seq is None:
+        raise ValueError("weight/log_b sequence structure mismatch")
+
+    total = target.new_tensor(0.0)
+    num_predictions = len(pred_seq)
+    for index, pred_i in enumerate(pred_seq):
+        if pred_i.shape != target.shape:
+            raise ValueError("pred and target shape mismatch")
+        weight_i = _align_param(weight_seq[index], batch, height, width, channels, "weight")
+        log_b_i = _align_param(log_b_seq[index], batch, height, width, channels, "log_b")
+        i_weight = gamma ** (num_predictions - index - 1)
+        total = total + i_weight * _mol_nll(pred_i, target, weight_i, log_b_i, valid_mask)
+    return total

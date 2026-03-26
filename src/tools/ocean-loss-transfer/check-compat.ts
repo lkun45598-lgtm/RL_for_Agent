@@ -17,7 +17,7 @@ import path from 'node:path';
 
 export const oceanLossTransferCheckCompat = defineTool({
   name: 'ocean_loss_transfer_check_compat',
-  description: '检查 Loss IR 与目标接口的兼容性',
+  description: '可选参考：检查 Loss IR 与目标接口的兼容性，不替代 analysis_plan 决策',
 
   params: {
     loss_ir_yaml: { type: 'string', description: 'Loss IR YAML 文件路径' }

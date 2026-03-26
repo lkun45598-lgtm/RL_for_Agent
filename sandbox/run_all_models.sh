@@ -7,7 +7,8 @@ LOSS_FILE=${1:-}
 PYTHON=$(python3 "$(dirname "${BASH_SOURCE[0]}")/../scripts/python_manager.py" --module torch 2>/dev/null | grep -oP '(?<=: ).*')
 PYTHON=${PYTHON:-python3}
 SCRIPT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/_run_once.py"
-CONFIG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/configs"
+DEFAULT_CONFIG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/configs"
+CONFIG_DIR="${SANDBOX_CONFIG_DIR:-$DEFAULT_CONFIG_DIR}"
 LOG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 declare -A MODEL_GPU=(
@@ -32,6 +33,7 @@ else
     echo "  Loss: sandbox_loss.py"
 fi
 echo "  $(date)"
+echo "  Config dir: $CONFIG_DIR"
 echo "=============================="
 
 # 构建 loss 参数

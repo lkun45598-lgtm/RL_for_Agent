@@ -1,9 +1,9 @@
 """
 @file prepare_context.py
-@description 扫描代码仓库，准备 Loss IR 提取的上下文材料
+@description 扫描代码仓库，准备 loss transfer 闭环所需的论文/代码上下文材料
 @author Leizheng
 @date 2026-03-23
-@version 1.0.0
+@version 1.2.0
 
 @changelog
   - 2026-03-23 Leizheng: v1.0.0 初始版本
@@ -11,6 +11,8 @@
     - 代码预处理（提取函数签名、移除注释）
     - 依赖分析（import 语句提取）
     - 返回结构化 JSON
+  - 2026-03-24 Leizheng: v1.1.0 支持论文 PDF 上下文提取（abstract/sections/loss_snippets）
+  - 2026-03-26 OpenAI Codex: v1.2.0 补充 analysis_plan 输出路径，供 Agent 主流程使用
 """
 
 import os
@@ -18,7 +20,7 @@ import re
 import json
 import ast
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import argparse
 
 
@@ -62,6 +64,10 @@ def find_loss_files(repo_path: str) -> List[Dict[str, Any]]:
                 priority += 5
             if 'criterion' in content.lower():
                 priority += 2
+            # 很多论文会把 loss 计算塞进 model.forward 里（比如 nf_loss / aux_loss），
+            # 这种情况文件名不含 loss、也没有 def loss()，但依然是关键信息。
+            if 'loss' in content.lower():
+                priority += 1
 
             if priority > 0:
                 candidates.append({
@@ -129,14 +135,20 @@ def preprocess_code(content: str, max_lines: int = 5000) -> str:
     return '\n'.join(processed_lines)
 
 
-def prepare_context(code_repo_path: str, paper_slug: str, output_dir: str = None) -> Dict[str, Any]:
+def prepare_context(
+    code_repo_path: str,
+    paper_slug: str,
+    output_dir: str = None,
+    paper_pdf_path: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    准备 Loss IR 提取的上下文
+    准备 loss transfer 闭环的上下文
 
     Args:
         code_repo_path: 代码仓库路径
         paper_slug: 论文标识符
         output_dir: 输出目录（可选）
+        paper_pdf_path: 论文 PDF 路径（可选）
 
     Returns:
         包含文件列表、内容、schema 的字典
@@ -153,6 +165,27 @@ def prepare_context(code_repo_path: str, paper_slug: str, output_dir: str = None
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_yaml_path = output_dir / 'loss_ir.yaml'
+    output_formula_path = output_dir / 'loss_formula.json'
+    output_analysis_plan_path = output_dir / 'analysis_plan.json'
+
+    # 0. 提取论文 PDF 上下文（可选，不影响代码扫描）
+    paper_context: Optional[Dict[str, Any]] = None
+    if paper_pdf_path:
+        try:
+            from extract_paper_text import extract_paper_text
+
+            paper_context = extract_paper_text(
+                paper_pdf_path,
+                output_dir=output_dir,
+                # 0 = all pages；若你希望进一步控大小，可改成 30/40
+                max_pages=0,
+            )
+        except Exception as e:
+            paper_context = {
+                "success": False,
+                "paper_pdf_path": paper_pdf_path,
+                "error": f"extract_paper_text failed: {e}",
+            }
 
     # 1. 发现 loss 文件
     loss_files = find_loss_files(code_repo_path)
@@ -180,9 +213,12 @@ def prepare_context(code_repo_path: str, paper_slug: str, output_dir: str = None
 
     # 4. 构建返回结果
     result = {
+        'paper': paper_context,
         'primary_files': primary_files,
         'schema': schema_doc,
         'output_path': str(output_yaml_path),
+        'formula_output_path': str(output_formula_path),
+        'analysis_plan_output_path': str(output_analysis_plan_path),
         'code_repo': str(repo_path),
         'paper_slug': paper_slug
     }
@@ -195,10 +231,16 @@ if __name__ == '__main__':
     parser.add_argument('--code_repo', required=True, help='代码仓库路径')
     parser.add_argument('--paper_slug', required=True, help='论文标识符')
     parser.add_argument('--output_dir', help='输出目录（可选）')
+    parser.add_argument('--paper_pdf', help='论文 PDF 路径（可选）')
 
     args = parser.parse_args()
 
-    result = prepare_context(args.code_repo, args.paper_slug, args.output_dir)
+    result = prepare_context(
+        args.code_repo,
+        args.paper_slug,
+        args.output_dir,
+        paper_pdf_path=args.paper_pdf,
+    )
 
     # 输出 JSON
     print(json.dumps(result, indent=2, ensure_ascii=False))

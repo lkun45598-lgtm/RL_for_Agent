@@ -4,15 +4,15 @@
 
 ## 概述
 
-Loss Transfer System 是一个完全自动化的工具链,用于将研究论文中的 loss 函数迁移到 `sandbox/sandbox_loss.py`。系统通过 LLM 分析代码、4层渐进式验证、5-trial 结构化搜索,自动找到最优的 loss 配置。
+Loss Transfer System 是一个面向 Agent 的自动化工具链,用于将研究论文中的 loss 函数迁移到 `sandbox/sandbox_loss.py`。系统通过公式抽取、task context、analysis plan、4层渐进式验证和结构化轨迹记录,支持 Agent 自主分析、修改和迭代。
 
 ## 核心特性
 
 - **LLM 自动提取**: 分析论文代码,提取 loss 结构
 - **4层渐进式验证**: Static → Smoke → Single Model → Full Run
 - **已知失败拦截**: 基于 71 次实验的失败模式库
-- **5-trial 搜索**: 系统化探索 loss 变体
-- **自动 Git 推送**: 成功实验自动提交到 GitHub
+- **Task Context / Analysis Plan**: 把“提取事实”和“决策修改”明确拆开
+- **轨迹记录**: 为后续在线 RL 优化保留状态、动作、结果
 
 ## 快速开始
 
@@ -46,20 +46,24 @@ python scripts/ocean-loss-transfer/run_auto_experiment.py \
 ## 系统架构
 
 ```
-输入: 论文代码仓库
+输入: 论文 PDF + 论文代码 + 目标仓库
   ↓
-extract_loss_ir.py (LLM 分析)
+prepare_context.py / extract_loss_formula.py
   ↓
-Loss IR YAML
+loss_formula.json + loss_spec.yaml + loss_ir.yaml
   ↓
-check_compatibility.py (兼容性检查)
+context_builder.py
   ↓
-orchestrate_trials.py (5-trial 搜索)
-  ├─ Trial 1-5: generate_patch.py
-  ├─ 每个 trial: validate_loss.py (4层)
-  └─ experiment_recorder.py
+task_context.json
   ↓
-输出: summary.yaml + 自动 git push
+analysis_plan.json (由 Agent 生成)
+  ↓
+agent_repair_loop.py
+  ├─ attempt_executor.py (执行单个候选方案)
+  ├─ validate_loss.py (4层验证)
+  └─ trajectory_logger.py (task/attempt 轨迹)
+  ↓
+输出: agent_loop_summary.json + trajectory.jsonl
 ```
 
 ## 核心模块
@@ -91,13 +95,12 @@ multi_scale:
 | Layer 3: Single | ~2min | SwinIR 完整训练15 epochs |
 | Layer 4: Full | ~5min | 4模型并行训练 |
 
-### 3. 5-Trial 搜索策略
+### 3. Agentic 闭环
 
-1. **Faithful Core**: 忠实移植论文组件
-2. **Normalization Aligned**: 对齐 normalization
-3. **Weight Aligned**: 使用论文权重
-4. **Numerical Stabilized**: 数值稳定技巧
-5. **Fallback Hybrid**: 混合最优组件
+1. **Task Context**: 汇总公式、参数、symbol_map、代码上下文、兼容性
+2. **Analysis Plan**: Agent 决定要改 loss 参数化，还是要改模型/adapter 接口
+3. **Attempt Execution**: 每个候选方案单独验证和训练
+4. **Trajectory Logging**: 全部结果结构化写入，供后续 RL 使用
 
 ### 4. 已知失败模式 (71次实验)
 
@@ -113,12 +116,11 @@ scripts/ocean-loss-transfer/
 ├── extract_loss_ir.py          # LLM 提取
 ├── llm_extractor.py            # LLM API 调用
 ├── check_compatibility.py      # 兼容性检查
-├── generate_patch.py           # Patch 生成
-├── patch_templates.py          # 模板库
+├── context_builder.py          # task_context.json 构建
+├── attempt_executor.py         # 单个候选方案执行
+├── agent_repair_loop.py        # analysis_plan 驱动的闭环
 ├── validate_loss.py            # 4层验证
-├── run_trial.py                # 单次 trial
-├── orchestrate_trials.py       # 5-trial 编排
-├── experiment_recorder.py      # 实验记录
+├── trajectory_logger.py        # 轨迹记录
 └── run_auto_experiment.py      # 端到端脚本
 
 workflow/loss_transfer/
@@ -129,11 +131,15 @@ workflow/loss_transfer/
 
 sandbox/loss_transfer_experiments/
 └── {paper_slug}/
+    ├── task_context.json
+    ├── analysis_plan.json
     ├── loss_ir.yaml
-    ├── summary.yaml
-    └── trial_1/
-        ├── sandbox_loss.py
-        └── result.yaml
+    ├── loss_formula.json
+    ├── agent_loop_summary.json
+    ├── trajectory.jsonl
+    └── attempt_1/
+        ├── candidate_loss.py
+        └── result.json
 ```
 
 ## 完整示例
@@ -146,28 +152,23 @@ python scripts/ocean-loss-transfer/run_auto_experiment.py \
   --paper_slug sea_raft \
   --code_repo Benchmark/SEA-RAFT-main
 
-# 查看结果
-cat sandbox/loss_transfer_experiments/sea_raft/summary.yaml
+# 查看闭环汇总
+cat sandbox/loss_transfer_experiments/sea_raft/agent_loop_summary.json
 
-# 查看最佳 trial
-cat sandbox/loss_transfer_experiments/sea_raft/trial_X/sandbox_loss.py
+# 查看某次候选代码
+cat sandbox/loss_transfer_experiments/sea_raft/attempt_1/candidate_loss.py
 ```
 
 ### 输出示例
 
-```yaml
-paper_slug: sea_raft
-baseline:
-  ssim_mean: 0.6645
-trials:
-  - trial_id: 1
-    name: Faithful Core
-    passed: true
-    metrics:
-      swinir: 0.6680
-best_trial: 1
-best_ssim: 0.6680
-improvement: 0.0035
+```json
+{
+  "paper_slug": "sea_raft",
+  "status": "completed",
+  "best_attempt_id": 2,
+  "best_metric_name": "swinir",
+  "best_metric_value": 0.6680
+}
 ```
 
 ## 故障排除
@@ -175,16 +176,17 @@ improvement: 0.0035
 ### 常见问题
 
 **Q: LLM 提取失败?**
-- 检查 `.env` 中的 `ANTHROPIC_API_KEY` 和 `ANTHROPIC_BASE_URL`
+- 检查 `.env` 中的 `LLM_PROVIDER / LLM_API_KEY / LLM_BASE_URL`
+- 如果不用通用变量,则检查对应 provider 的 `OPENAI_*` 或 `ANTHROPIC_*`
 - 使用手动模式: `--manual_mode` 生成模板手动填写
 
 **Q: Layer 1 验证失败?**
 - 检查是否使用了禁止的 import
 - 查看 `workflow/loss_transfer/blocked_patterns.yaml`
 
-**Q: 所有 trial 都失败?**
+**Q: 所有 attempt 都失败?**
 - 检查 Loss IR 是否正确填写
-- 查看 `trial_1/result.yaml` 了解具体失败原因
+- 查看 `attempt_1/result.json` 了解具体失败原因
 
 **Q: Git push 失败?**
 - 检查 git 配置和权限
@@ -192,10 +194,10 @@ improvement: 0.0035
 
 ## 注意事项
 
-1. **实验时间**: 完整 5-trial 需要 10-30 分钟
+1. **实验时间**: 完整闭环耗时取决于 attempt 数和是否跑 Layer 4
 2. **GPU 占用**: Layer 3-4 会占用 GPU 4-7
-3. **自动推送**: 成功实验会自动 commit & push
-4. **Loss IR 质量**: 手动填写比 LLM 自动提取更准确
+3. **轨迹文件**: `task_context.json / analysis_plan.json / trajectory.jsonl` 都应保留
+4. **Loss IR 质量**: 手动复核 `loss_formula.json` 和 `symbol_map` 很重要
 
 ## 版本历史
 

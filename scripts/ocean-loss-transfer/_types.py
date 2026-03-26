@@ -2,11 +2,15 @@
 @file _types.py
 @description 类型定义模块 - 消除隐式/显式 Any，规范化工作流数据结构
 @author kongzhiquan
+@contributors Leizheng
 @date 2026-03-23
-@version 1.0.0
+@version 1.1.0
 
 @changelog
   - 2026-03-23 kongzhiquan: v1.0.0 initial version
+  - 2026-03-24 Leizheng: v1.1.0 add enhanced validation types (FailureCategory,
+    TrainingCurve, GradientAnalysis, SmokeTestDetail, FixAttempt, EarlyStopInfo);
+    extend ValidationResult, TrialResult, ExperimentSummary with new optional fields
 """
 
 from typing import Dict, List, Optional, Union, Literal, TypedDict
@@ -28,6 +32,24 @@ ComponentType = Literal[
     'pixel_loss', 'gradient_loss', 'frequency_loss',
     'structural_loss', 'unknown'
 ]
+
+# 失败分类 (改进3: 实验记录增强)
+FailureCategory = Literal[
+    'syntax_error', 'import_error', 'forbidden_import', 'missing_function',
+    'invalid_signature', 'blocked_pattern',
+    'nan_in_forward', 'inf_in_forward', 'nan_in_gradient', 'no_gradient',
+    'gradient_vanish', 'gradient_explode', 'invalid_output_type', 'not_scalar',
+    'mask_none_failed', 'runtime_error', 'import_failed',
+    'ssim_collapse', 'model_collapse', 'below_baseline',
+    'timeout', 'oom', 'crash', 'parse_failed',
+    'nan_during_training',
+    'undefined_function', 'variable_scope_error', 'device_hardcoded',
+    'shape_dependent_nan', 'shape_dependent_error',
+    'boundary_instability', 'boundary_gradient_nan',
+]
+
+# 训练趋势 (改进6: 超时恢复)
+TrainingTrend = Literal['improving', 'degrading', 'unstable', 'insufficient_data']
 
 
 # ============================================================
@@ -121,6 +143,67 @@ class ComponentsByType(TypedDict):
 
 
 # ============================================================
+# 增强验证类型 (borrowing from AutoResearchClaw patterns)
+# ============================================================
+
+class EpochMetric(TypedDict, total=False):
+    """单个 epoch 的训练指标"""
+    epoch: int
+    ssim: float
+    psnr: float
+    rmse: float
+    train_loss: float
+    valid_loss: float
+
+
+class TrainingCurve(TypedDict, total=False):
+    """从 stdout 提取的逐 epoch 训练曲线"""
+    epochs: List[EpochMetric]
+    trend: TrainingTrend
+    last_epoch: int
+    total_expected_epochs: int
+
+
+class StaticWarning(TypedDict):
+    """Layer 1 静态分析的非致命警告"""
+    type: str       # 'device_hardcoded' etc.
+    detail: str
+    line: int
+
+
+class GradientAnalysis(TypedDict, total=False):
+    """Layer 2 梯度流分析结果"""
+    grad_norm: float
+    grad_min: float
+    grad_max: float
+    warning: str    # 'vanishing' | 'exploding'
+
+
+class SmokeTestDetail(TypedDict, total=False):
+    """Layer 2 扩展 smoke 测试详情"""
+    shapes_tested: List[str]
+    boundary_test_passed: bool
+    gradient_analysis: GradientAnalysis
+
+
+class FixAttempt(TypedDict, total=False):
+    """单次自动修复尝试的记录"""
+    attempt_num: int
+    original_error: str
+    fix_applied: str
+    result: str     # 'fixed' | 'same_error' | 'different_error'
+
+
+class EarlyStopInfo(TypedDict, total=False):
+    """Trial 早停信息"""
+    reason: str     # 'systematic_incompatibility'
+    consecutive_failures: int
+    failure_pattern: str
+    trials_completed: int
+    trials_skipped: int
+
+
+# ============================================================
 # 验证结果
 # ============================================================
 
@@ -147,6 +230,15 @@ class ValidationResult(_ValidationResultBase, total=False):
     metrics: TrainingMetrics
     loss_value: float
     grad_norm: float
+    # 改进1: Layer 1 深度静态分析
+    warnings: List[StaticWarning]
+    # 改进2: Layer 2 梯度流分析
+    smoke_detail: SmokeTestDetail
+    # 改进3: 失败归因分类
+    failure_category: FailureCategory
+    # 改进6: 超时恢复
+    training_curve: TrainingCurve
+    partial_metrics: TrainingMetrics
 
 
 class ValidationIRResult(TypedDict):
@@ -183,20 +275,35 @@ class LLMPatchSpec(_LLMPatchSpecBase, total=False):
     pass
 
 
-PatchSpec = Union[TemplatePatchSpec, LLMPatchSpec]
+class _AgentPatchSpecBase(TypedDict):
+    name: str
+    mode: Literal['agent_generate']
+    strategy: GenerationStrategy
+    code: str
+
+
+class AgentPatchSpec(_AgentPatchSpecBase, total=False):
+    """Agent-Native 生成模式的 patch 规格"""
+    pass
+
+
+PatchSpec = Union[TemplatePatchSpec, LLMPatchSpec, AgentPatchSpec]
 
 
 # ============================================================
 # 代码生成结果
 # ============================================================
 
-class GenerateResult(TypedDict):
+class GenerateResult(TypedDict, total=False):
     """generate_loss_code 的返回值"""
     code: str
     passed_static: bool
     passed_smoke: bool
     repair_rounds: int
     error: Optional[str]
+    passed_formula_alignment: bool
+    formula_alignment_error: Optional[str]
+    formula_alignment_warnings: List[str]
 
 
 class LLMGenerateValidation(TypedDict, total=False):
@@ -205,6 +312,9 @@ class LLMGenerateValidation(TypedDict, total=False):
     passed_smoke: bool
     repair_rounds: int
     error: Optional[str]
+    passed_formula_alignment: bool
+    formula_alignment_error: Optional[str]
+    formula_alignment_warnings: List[str]
 
 
 # ============================================================
@@ -216,12 +326,16 @@ class _TrialResultBase(TypedDict):
 
 
 class TrialResult(_TrialResultBase, total=False):
-    """run_single_trial 的返回值"""
+    """Single attempt execution result."""
     layer_stopped: Optional[ValidationLayer]
     validation: Dict[str, ValidationResult]
     metrics: TrainingMetrics
     trial_dir: str
     error: str
+    # 改进4: 执行修复循环
+    fix_attempts: List[FixAttempt]
+    # 改进3: 基线对比
+    baseline_delta: Optional[float]
 
 
 class _TrialSummaryItemBase(TypedDict):
@@ -231,7 +345,7 @@ class _TrialSummaryItemBase(TypedDict):
 
 
 class TrialSummaryItem(_TrialSummaryItemBase, total=False):
-    """orchestrate_trials 中 trials 列表的元素"""
+    """Summary item for an executed attempt."""
     layer_stopped: Optional[str]
     metrics: TrainingMetrics
 
@@ -263,10 +377,14 @@ class _ExperimentSummaryBase(TypedDict):
 
 
 class ExperimentSummary(_ExperimentSummaryBase, total=False):
-    """orchestrate_trials 的最终返回值"""
+    """Top-level summary for the agentic loop."""
     best_trial: Optional[int]
     best_ssim: float
     improvement: Optional[float]
+    # 改进5: Trial 早停
+    early_stop: Optional[EarlyStopInfo]
+    # 改进3: 失败归因统计
+    failure_summary: Dict[str, int]
 
 
 # ============================================================
