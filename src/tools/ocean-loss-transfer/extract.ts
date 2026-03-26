@@ -17,7 +17,7 @@ import path from 'node:path';
 
 export const oceanLossTransferExtract = defineTool({
   name: 'ocean_loss_transfer_extract',
-  description: '从论文 PDF 和代码仓库提取 Loss IR',
+  description: '可选旧路径：从论文 PDF 和代码仓库提取 Loss IR，供参考分析使用',
 
   params: {
     paper_pdf_path: { type: 'string', description: '论文 PDF 路径', required: false },

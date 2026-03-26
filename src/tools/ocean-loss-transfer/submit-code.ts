@@ -15,7 +15,7 @@ import os from 'node:os';
 
 export const oceanLossTransferSubmitCode = defineTool({
   name: 'ocean_loss_transfer_submit_code',
-  description: 'Agent 直接提交 sandbox_loss.py 候选代码，交给 attempt_executor 做验证和训练测试',
+  description: '辅助调试：手工提交一版候选 loss 代码，交给 attempt_executor 做验证和训练测试',
 
   params: {
     code: { type: 'string', description: 'Agent 编写的完整 sandbox_loss.py 代码', required: true },

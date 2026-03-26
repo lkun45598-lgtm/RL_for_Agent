@@ -12,7 +12,7 @@ import path from 'node:path';
 
 export const oceanLossTransferOrchestrate = defineTool({
   name: 'ocean_loss_transfer_orchestrate',
-  description: '构建 task_context.json，并按需执行 analysis_plan.json 驱动的 agentic loss 迁移闭环',
+  description: '主入口：构建 task_context.json，并执行 analysis_plan.json 驱动的 agentic loss 迁移闭环',
 
   params: {
     paper_slug: { type: 'string', description: '论文标识符' },

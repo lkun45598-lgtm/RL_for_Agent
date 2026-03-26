@@ -1,9 +1,9 @@
 """
 @file prepare_context.py
-@description 扫描代码仓库，准备 Loss IR 提取的上下文材料
+@description 扫描代码仓库，准备 loss transfer 闭环所需的论文/代码上下文材料
 @author Leizheng
 @date 2026-03-23
-@version 1.1.0
+@version 1.2.0
 
 @changelog
   - 2026-03-23 Leizheng: v1.0.0 初始版本
@@ -12,6 +12,7 @@
     - 依赖分析（import 语句提取）
     - 返回结构化 JSON
   - 2026-03-24 Leizheng: v1.1.0 支持论文 PDF 上下文提取（abstract/sections/loss_snippets）
+  - 2026-03-26 OpenAI Codex: v1.2.0 补充 analysis_plan 输出路径，供 Agent 主流程使用
 """
 
 import os
@@ -141,7 +142,7 @@ def prepare_context(
     paper_pdf_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    准备 Loss IR 提取的上下文
+    准备 loss transfer 闭环的上下文
 
     Args:
         code_repo_path: 代码仓库路径
@@ -165,6 +166,7 @@ def prepare_context(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_yaml_path = output_dir / 'loss_ir.yaml'
     output_formula_path = output_dir / 'loss_formula.json'
+    output_analysis_plan_path = output_dir / 'analysis_plan.json'
 
     # 0. 提取论文 PDF 上下文（可选，不影响代码扫描）
     paper_context: Optional[Dict[str, Any]] = None
@@ -216,6 +218,7 @@ def prepare_context(
         'schema': schema_doc,
         'output_path': str(output_yaml_path),
         'formula_output_path': str(output_formula_path),
+        'analysis_plan_output_path': str(output_analysis_plan_path),
         'code_repo': str(repo_path),
         'paper_slug': paper_slug
     }

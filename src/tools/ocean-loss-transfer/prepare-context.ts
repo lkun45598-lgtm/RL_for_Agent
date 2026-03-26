@@ -1,13 +1,14 @@
 /**
  * @file prepare-context.ts
- * @description 准备 Loss IR 提取的上下文材料
+ * @description 准备论文/代码联合分析所需的上下文材料
  * @author Leizheng
  * @date 2026-03-23
- * @version 1.1.0
+ * @version 1.2.0
  *
  * @changelog
  *   - 2026-03-23 Leizheng: v1.0.0 初始版本
  *   - 2026-03-24 Leizheng: v1.1.0 支持可选 paper_pdf_path，将论文文本上下文一并返回（abstract/sections/loss_snippets）
+ *   - 2026-03-26 OpenAI Codex: v1.2.0 调整 analysis_guide，使 Agent 优先产出 loss_formula 和 analysis_plan
  */
 
 import { defineTool } from '@shareai-lab/kode-sdk';
@@ -17,7 +18,7 @@ import path from 'node:path';
 
 export const oceanLossTransferPrepareContext = defineTool({
   name: 'ocean_loss_transfer_prepare_context',
-  description: '扫描代码仓库，准备 Loss IR 提取的上下文材料（可选同时解析论文 PDF 并返回 loss 相关片段）',
+  description: '扫描代码仓库并整理论文/代码上下文，供 Agent 提取公式并编写 analysis_plan',
 
   params: {
     code_repo_path: { type: 'string', description: '代码仓库路径', required: true },
@@ -55,11 +56,14 @@ export const oceanLossTransferPrepareContext = defineTool({
     return {
       ...context,
       analysis_guide: `
-请按以下步骤分析代码并生成 Loss IR YAML：
+请按以下顺序分析并驱动 loss transfer 闭环：
 
-0. **优先阅读论文中的 loss 描述（如果提供了 paper_pdf_path）**
+0. **先读论文，再读代码**
    - 查看返回的 paper.abstract / paper.loss_snippets / paper.sections
-   - 同时提取 loss 公式、关键参数、符号到变量名映射
+   - 查看 primary_files 中的高优先级文件，确认 loss 是在独立 loss 文件、trainer，还是 model.forward 中实现
+
+1. **先产出公式，不要先写 Loss IR**
+   - 从论文和代码联合提取 loss 公式、关键参数、以及论文符号到代码变量名的双射映射
    - 将公式写入 formula_output_path 指向的 \`loss_formula.json\`
    - 推荐结构：
      {
@@ -68,34 +72,41 @@ export const oceanLossTransferPrepareContext = defineTool({
        "symbol_map": {"\\\\hat{y}": "pred", "y": "target", "\\\\gamma": "gamma"}
      }
 
-1. **识别主 loss 函数**
-   - 查看 primary_files 中优先级最高的文件
-   - 找到被训练循环调用的 loss 函数
+2. **判断正确的 integration path**
+   - 可选路径：\`loss_only\` / \`adapter_wrapper\` / \`extend_model_outputs\` / \`model_surgery\`
+   - 如果论文 loss 需要中间特征、uncertainty、aux tensors 或 model.forward 的额外输出，不要强行走 \`loss_only\`
+   - 模型级修改只能发生在 attempt-scoped sandbox 副本里，不能直接修改 repo-root 源码
 
-2. **分解 loss 组件**
-   - 像素级 loss: L1/L2/Charbonnier (torch.abs, **2, sqrt)
-   - 梯度 loss: Sobel/Laplacian (conv2d with kernel)
-   - 频域 loss: FFT/DCT (torch.fft.rfft2, torch.fft.fft2)
-   - 感知 loss: VGG features (需要预训练网络)
+3. **编写 analysis_plan.json**
+   - 将计划写到 \`analysis_plan_output_path\`
+   - 推荐结构：
+     {
+       "summary": "...",
+       "stop_on_first_pass": false,
+       "integration_decision": {
+         "path": "adapter_wrapper",
+         "rationale": "...",
+         "evidence_refs": ["paper.loss", "code.model_forward"]
+       },
+       "attempts": [
+         {
+           "name": "Faithful attempt",
+           "kind": "agent_code",
+           "objective": "...",
+           "files_to_edit": ["candidate_loss.py"],
+           "required_edit_paths": ["sandbox_model_adapter.py"],
+           "evidence_refs": ["paper.loss", "code.loss_callsite"]
+         }
+       ]
+     }
 
-3. **提取关键参数**
-   - reduction: .mean() / .sum()
-   - mask_handling: * mask / mask.bool()
-   - normalization: / target.norm() (relative)
-   - epsilon/clamp: + eps / .clamp(min=eps)
-
-4. **检查不兼容特征**
-   - 需要模型中间层？→ requires_model_internals=true
-   - 需要预训练网络？→ requires_pretrained_network=true
-   - 需要对抗训练？→ requires_adversarial=true
-
-5. **填充 Loss IR schema**
-   - 参考 schema 定义填写所有字段
-   - 如有不确定的地方，在 YAML 中加注释
+4. **Loss IR 是可选参考，不是主产物**
+   - 只有在你认为有助于总结 loss 结构时，再将 Loss IR YAML 写入 \`output_path\`
+   - 不要让 Loss IR 取代 \`loss_formula.json\` 和 \`analysis_plan.json\`
 
 完成后：
 1. 调用 ocean_loss_transfer_write_formula 写入 \`loss_formula.json\`
-2. 调用 ocean_loss_transfer_write_ir 写入 \`loss_ir.yaml\`
+2. 调用 ocean_loss_transfer_orchestrate，并传入 \`analysis_plan_path\`
 `
     };
   }
