@@ -22,6 +22,8 @@ last_modified: 2026-03-26
 
 | 工具 | 用途 | 使用时机 |
 |------|------|----------|
+| `ocean_loss_transfer_build_benchmark_catalog` | 扫描 `Benchmark/` 并生成规范化 benchmark catalog | benchmark 较多、需要批量整理时 |
+| `ocean_loss_transfer_materialize_benchmark_entry` | 将 catalog 条目解析成可直接运行的 `paper_pdf_path + code_repo_path` | code 是 zip/archive 或需要统一入口时 |
 | `ocean_loss_transfer_prepare_context` | 准备论文/代码上下文和输出路径 | 开始分析时 |
 | `ocean_loss_transfer_extract_formula` | 起草 `loss_formula.json` | 需要快速抽公式时 |
 | `ocean_loss_transfer_write_formula` | 校验并写入公式 spec | 公式确认后 |
