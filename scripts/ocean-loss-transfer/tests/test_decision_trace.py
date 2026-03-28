@@ -141,6 +141,7 @@ class DecisionTraceTests(unittest.TestCase):
     def test_write_decision_trace_writes_jsonl_records(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             experiment_dir = Path(temp_dir)
+            case_memory_path = experiment_dir / 'knowledge_base' / 'case_memories.jsonl'
             task_context = {
                 'paths': {'task_context_path': str(experiment_dir / 'task_context.json')},
                 'integration_assessment': {'recommended_path': 'loss_only'},
@@ -186,14 +187,18 @@ class DecisionTraceTests(unittest.TestCase):
                 analysis_plan_path=str(experiment_dir / 'analysis_plan.json'),
                 trajectory_path=str(experiment_dir / 'trajectory.jsonl'),
                 attempts=attempts,
+                case_memory_path=case_memory_path,
             )
 
             trace_path = Path(result['decision_trace_path'])
             rl_dataset_path = Path(result['rl_dataset_path'])
+            self.assertEqual(result['case_memory_path'], str(case_memory_path.resolve()))
             self.assertTrue(trace_path.exists())
             self.assertTrue(rl_dataset_path.exists())
+            self.assertTrue(case_memory_path.exists())
             self.assertEqual(result['decision_trace_count'], 2)
             self.assertEqual(result['rl_dataset_count'], 2)
+            self.assertEqual(result['case_memory_count'], 2)
             records = [
                 json.loads(line)
                 for line in trace_path.read_text(encoding='utf-8').splitlines()
@@ -204,14 +209,22 @@ class DecisionTraceTests(unittest.TestCase):
                 for line in rl_dataset_path.read_text(encoding='utf-8').splitlines()
                 if line.strip()
             ]
+            case_records = [
+                json.loads(line)
+                for line in case_memory_path.read_text(encoding='utf-8').splitlines()
+                if line.strip()
+            ]
             self.assertEqual(len(records), 2)
             self.assertEqual(len(rl_records), 2)
+            self.assertEqual(len(case_records), 2)
             self.assertEqual(records[1]['state']['previous_attempt_id'], 1)
             self.assertEqual(records[1]['state']['previous_primary_metric'], 0.61)
             self.assertFalse(rl_records[0]['terminal'])
             self.assertTrue(rl_records[1]['terminal'])
             self.assertEqual(rl_records[0]['next_attempt_id'], 2)
             self.assertEqual(rl_records[1]['reward']['stage_score'], 6)
+            self.assertEqual(case_records[1]['stop_layer'], None)
+            self.assertEqual(case_records[1]['integration_path'], 'loss_only')
 
     def test_build_rl_decision_dataset_record_keeps_controller_features(self) -> None:
         trace_record = {

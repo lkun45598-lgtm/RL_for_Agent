@@ -1,3 +1,16 @@
+"""
+@file test_agent_artifact_generator_integration.py
+@description Integration tests for agent artifact generation, evidence probes, and case-memory prompt reuse.
+@author kongzhiquan
+@contributors OpenAI Codex
+@date 2026-03-28
+@version 1.1.0
+
+@changelog
+  - 2026-03-28 kongzhiquan: v1.0.0 add integration coverage for agent artifact generation
+  - 2026-03-28 kongzhiquan: v1.1.0 merge evidence-probe and case-memory conflict expectations
+"""
+
 from __future__ import annotations
 
 import json
@@ -173,6 +186,37 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             bundle = self._write_task_context_bundle(root)
+            case_memory_path = root / 'knowledge_base' / 'case_memories.jsonl'
+            case_memory_path.parent.mkdir(parents=True, exist_ok=True)
+            case_memory_path.write_text(
+                json.dumps(
+                    {
+                        'schema_version': 'case_memory.v1',
+                        'paper_slug': 'historical-paper',
+                        'attempt_id': 4,
+                        'integration_path': 'adapter_wrapper',
+                        'kind': 'agent_code',
+                        'objective': 'Historical adapter rescue with a reconstruction anchor.',
+                        'strategy_delta': {
+                            'what_changes_now': ['add a reconstruction anchor'],
+                        },
+                        'stop_layer': 'layer3',
+                        'error': 'timeout',
+                        'passed': False,
+                        'primary_metric_name': 'val_ssim',
+                        'primary_metric': 0.63,
+                        'stage_score': 4,
+                        'repair_rounds_used': 1,
+                        'repair_hypothesis': 'weighting-only loss starved reconstruction fidelity',
+                        'post_stop_layer': 'layer4',
+                        'post_error': 'below threshold',
+                        'provenance': {'result_path': str(root / 'historical_result.json')},
+                    },
+                    ensure_ascii=False,
+                )
+                + '\n',
+                encoding='utf-8',
+            )
             output_code_path = bundle['experiment_dir'] / 'attempt_1' / 'candidate_loss.py'
             attempt_spec = {
                 'name': 'Adapter Attempt',
@@ -248,7 +292,10 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
                     )
                 return {'status': 'success', 'agent_id': 'stub-repair', 'text': 'repaired'}
 
-            with patch('loss_transfer.agent.agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat):
+            with patch('loss_transfer.agent.agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat), patch(
+                'loss_transfer.agent.agent_artifact_generator._CASE_MEMORY_PATH',
+                case_memory_path,
+            ):
                 generation = generate_candidate_loss(
                     task_context_path=str(bundle['task_context_path']),
                     attempt_spec=attempt_spec,
@@ -284,6 +331,8 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
             self.assertIn('代码修复补证据阶段', str(call_records[1]['message']))
             self.assertIn(str(output_code_path), call_records[2]['files'])
             self.assertIn('current candidate_loss.py', str(call_records[2]['message']))
+            self.assertIn('Historical adapter rescue', str(call_records[2]['message']))
+            self.assertIn('weighting-only loss starved reconstruction fidelity', str(call_records[2]['message']))
             manifest = json.loads((bundle['experiment_dir'] / 'run_manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(len(manifest['agent_calls']), 3)
             self.assertEqual(manifest['agent_calls'][0]['stage'], 'candidate_loss_generation')
@@ -560,6 +609,37 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             bundle = self._write_task_context_bundle(root)
+            case_memory_path = root / 'knowledge_base' / 'case_memories.jsonl'
+            case_memory_path.parent.mkdir(parents=True, exist_ok=True)
+            case_memory_path.write_text(
+                json.dumps(
+                    {
+                        'schema_version': 'case_memory.v1',
+                        'paper_slug': 'historical-paper',
+                        'attempt_id': 7,
+                        'integration_path': 'adapter_wrapper',
+                        'kind': 'agent_code',
+                        'objective': 'Historical follow-up that added a reconstruction anchor after SSIM collapse.',
+                        'strategy_delta': {
+                            'what_changes_now': ['add a reconstruction anchor', 'stop repeating weighting-only plans'],
+                        },
+                        'stop_layer': 'layer4',
+                        'error': 'SSIM too low',
+                        'passed': True,
+                        'primary_metric_name': 'swinir',
+                        'primary_metric': 0.71,
+                        'stage_score': 6,
+                        'repair_rounds_used': 1,
+                        'repair_hypothesis': 'loss-only weighting branch could not recover SSIM',
+                        'post_stop_layer': None,
+                        'post_error': None,
+                        'provenance': {'result_path': str(root / 'historical_followup_result.json')},
+                    },
+                    ensure_ascii=False,
+                )
+                + '\n',
+                encoding='utf-8',
+            )
             trajectory_path = bundle['experiment_dir'] / 'trajectory.jsonl'
             trajectory_path.write_text(
                 json.dumps({'event_type': 'attempt_finished', 'payload': {'attempt_id': 1}}, ensure_ascii=False) + '\n',
@@ -647,7 +727,10 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
                 )
                 return {'status': 'success', 'agent_id': 'stub-followup', 'text': 'attempt written'}
 
-            with patch('loss_transfer.agent.agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat):
+            with patch('loss_transfer.agent.agent_artifact_generator.run_agent_chat', side_effect=fake_run_agent_chat), patch(
+                'loss_transfer.agent.agent_artifact_generator._CASE_MEMORY_PATH',
+                case_memory_path,
+            ):
                 result = generate_followup_attempt(
                     str(result_path),
                     task_context_path=str(bundle['task_context_path']),
@@ -664,10 +747,12 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
             self.assertEqual(result['followup_evidence_probe_status'], 'not_needed')
             self.assertEqual(result['attempt_spec']['strategy_delta']['previous_attempt_id'], 1)
             self.assertEqual(len(call_records), 2)
-            self.assertIn(str(result_path), call_records[0]['files'])
-            self.assertIn(str(repair_plan_path), call_records[0]['files'])
+            self.assertIn(str(result_path), call_records[1]['files'])
+            self.assertIn(str(repair_plan_path), call_records[1]['files'])
             self.assertIn('逐轮重规划补证据阶段', str(call_records[0]['message']))
             self.assertIn('逐轮重规划阶段', str(call_records[1]['message']))
+            self.assertIn('Historical follow-up that added a reconstruction anchor', str(call_records[1]['message']))
+            self.assertIn('loss-only weighting branch could not recover SSIM', str(call_records[1]['message']))
 
     def test_generate_followup_attempt_runs_probe_before_replan(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -978,3 +1063,4 @@ class AgentArtifactGeneratorIntegrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

@@ -3,7 +3,6 @@ name: ocean-loss-transfer
 description: 论文 Loss 自动迁移闭环 - 论文/代码联合分析、公式提取、analysis_plan、attempt 沙箱验证与修复
 version: 3.1.0
 author: Leizheng
-contributors: Leizheng
 last_modified: 2026-03-26
 ---
 

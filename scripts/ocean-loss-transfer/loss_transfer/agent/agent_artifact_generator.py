@@ -2,7 +2,14 @@
 @file agent_artifact_generator.py
 @description Use the local KODE agent service to generate analysis plans and candidate loss code.
 @author OpenAI Codex
+@contributors kongzhiquan
 @date 2026-03-25
+@version 1.2.0
+
+@changelog
+  - 2026-03-25 OpenAI Codex: v1.0.0 initial version
+  - 2026-03-28 kongzhiquan: v1.1.0 extract shared case-memory retrieval helpers
+  - 2026-03-28 kongzhiquan: v1.2.0 merge evidence-probe orchestration with shared case-memory retrieval
 """
 
 from __future__ import annotations
@@ -30,9 +37,16 @@ from loss_transfer.agent.validate_analysis_plan import validate_analysis_plan, v
 from loss_transfer.common.paths import PROJECT_ROOT
 from loss_transfer.common.run_manifest import append_run_manifest_agent_call, write_run_manifest
 from loss_transfer.common.routing_audit import write_routing_audit
+from loss_transfer.memory.case_memory_retriever import (
+    append_memory_block as _append_memory_block,
+    format_case_memory_block as _format_case_memory_block,
+    load_similar_case_memories as _load_similar_case_memories,
+)
+from loss_transfer.memory.case_memory_store import DEFAULT_CASE_MEMORY_PATH
 
 
 _PROJECT_ROOT = PROJECT_ROOT
+_CASE_MEMORY_PATH = DEFAULT_CASE_MEMORY_PATH
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -80,6 +94,23 @@ def _append_agent_call_manifest(
     if extra:
         call_record.update(extra)
     return append_run_manifest_agent_call(run_manifest_path, call_record)
+
+
+def _safe_dict(value: Any) -> Dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _safe_load_json_object(path: Optional[Path]) -> Optional[Dict[str, Any]]:
+    if path is None or not path.exists():
+        return None
+    try:
+        return _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def _build_repair_plan_placeholder(failure_feedback: Dict[str, Any]) -> Dict[str, Any]:
@@ -1453,6 +1484,7 @@ def generate_followup_attempt(
         else None
     )
     latest_repair_plan = _resolve_latest_repair_plan_path(attempt_result)
+    latest_repair_plan_payload = _safe_load_json_object(latest_repair_plan)
     resolved_next_attempt_id = (
         int(next_attempt_id)
         if next_attempt_id is not None
@@ -1501,8 +1533,18 @@ def generate_followup_attempt(
             probe_result_path = candidate_probe_result
             files.append(str(candidate_probe_result))
 
+    memory_block = _format_case_memory_block(
+        _load_similar_case_memories(
+            task_context=task_context,
+            latest_attempt_result=attempt_result,
+            latest_repair_plan=latest_repair_plan_payload,
+            case_memory_path=_CASE_MEMORY_PATH,
+        )
+    )
+
     response = run_agent_chat(
-        message=_build_followup_attempt_prompt(
+        message=_append_memory_block(
+            _build_followup_attempt_prompt(
             task_context_path=task_context_file,
             analysis_plan_path=resolved_analysis_plan if resolved_analysis_plan and resolved_analysis_plan.exists() else None,
             latest_attempt_result_path=latest_result_file,
@@ -1512,6 +1554,8 @@ def generate_followup_attempt(
             output_attempt_path=output_path,
             max_attempts=max_attempts,
             next_attempt_id=resolved_next_attempt_id,
+            ),
+            memory_block,
         ),
         mode='edit',
         working_dir=str(working_dir),
@@ -2012,7 +2056,6 @@ def repair_candidate_loss(
         failure_feedback=failure_feedback,
         repair_plan_path=resolved_repair_plan_path,
     )
-
     evidence_probe = _run_candidate_loss_repair_evidence_probe(
         context=context,
         failure_feedback=failure_feedback,
@@ -2053,20 +2096,32 @@ def repair_candidate_loss(
     if repair_probe_result_path is not None and repair_probe_result_path.exists():
         repair_input_files.append(str(repair_probe_result_path))
 
-    response = run_agent_chat(
-        message=_build_candidate_loss_repair_prompt(
-            task_context_path=context['task_context_file'],
-            analysis_plan_path=context['resolved_analysis_plan'],
-            loss_formula_path=context['resolved_loss_formula'],
-            editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
-            editable_targets=context['edit_workspace']['editable_targets'],
-            current_code_path=context['output_path'],
-            output_code_path=context['output_path'],
-            repair_plan_path=context['repair_plan_path'] or (context['output_path'].parent / 'repair_plan.json'),
-            failure_feedback_path=context.get('failure_feedback_path'),
-            evidence_probe_result_path=repair_probe_result_path,
+    memory_block = _format_case_memory_block(
+        _load_similar_case_memories(
+            task_context=context['task_context'],
             attempt_spec=attempt_spec,
             failure_feedback=failure_feedback,
+            case_memory_path=_CASE_MEMORY_PATH,
+        )
+    )
+
+    response = run_agent_chat(
+        message=_append_memory_block(
+            _build_candidate_loss_repair_prompt(
+                task_context_path=context['task_context_file'],
+                analysis_plan_path=context['resolved_analysis_plan'],
+                loss_formula_path=context['resolved_loss_formula'],
+                editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
+                editable_targets=context['edit_workspace']['editable_targets'],
+                current_code_path=context['output_path'],
+                output_code_path=context['output_path'],
+                repair_plan_path=context['repair_plan_path'] or (context['output_path'].parent / 'repair_plan.json'),
+                failure_feedback_path=context.get('failure_feedback_path'),
+                evidence_probe_result_path=repair_probe_result_path,
+                attempt_spec=attempt_spec,
+                failure_feedback=failure_feedback,
+            ),
+            memory_block,
         ),
         mode='edit',
         working_dir=str(context['working_dir']),

@@ -1,3 +1,16 @@
+"""
+@file test_agent_repair_loop_integration.py
+@description Integration tests for the agent repair loop, covering routing audits, run manifests, and case-memory exports.
+@author kongzhiquan
+@contributors OpenAI Codex
+@date 2026-03-28
+@version 1.1.0
+
+@changelog
+  - 2026-03-28 kongzhiquan: v1.0.0 add integration coverage for the agent repair loop
+  - 2026-03-28 kongzhiquan: v1.1.0 merge routing-audit and case-memory conflict expectations
+"""
+
 from __future__ import annotations
 
 import json
@@ -109,6 +122,7 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             experiment_dir = temp_root / 'experiment'
+            case_memory_path = temp_root / 'knowledge_base' / 'case_memories.jsonl'
             experiment_dir.mkdir(parents=True, exist_ok=True)
             task_context = self._write_task_context(experiment_dir, paper_slug='paper_loop')
             input_plan_path = temp_root / 'input_analysis_plan.json'
@@ -142,7 +156,10 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             with patch(
                 'loss_transfer.agent.agent_repair_loop.write_run_manifest',
                 return_value={'run_manifest_path': str(experiment_dir / 'run_manifest.json')},
-            ), patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt):
+            ), patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt), patch(
+                'loss_transfer.common.decision_trace._DEFAULT_CASE_MEMORY_PATH',
+                case_memory_path,
+            ):
                 result = run_agent_repair_loop(
                     task_context,
                     analysis_plan_path=str(input_plan_path),
@@ -162,6 +179,8 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             self.assertTrue(Path(result['decision_trace_path']).exists())
             self.assertTrue(Path(result['routing_audit_path']).exists())
             self.assertEqual(result['run_manifest_path'], str(experiment_dir / 'run_manifest.json'))
+            self.assertEqual(result['case_memory_path'], str(case_memory_path.resolve()))
+            self.assertTrue(case_memory_path.exists())
             self.assertEqual(len(result['attempts']), 2)
             self.assertEqual(len(call_records), 2)
             self.assertEqual(call_records[0]['dataset_root'], '/data1/user/lz/RL_data_test')
@@ -197,6 +216,7 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             experiment_dir = temp_root / 'experiment'
+            case_memory_path = temp_root / 'knowledge_base' / 'case_memories.jsonl'
             experiment_dir.mkdir(parents=True, exist_ok=True)
             task_context = self._write_task_context(experiment_dir, paper_slug='paper_replan')
             input_plan_path = temp_root / 'single_attempt_plan.json'
@@ -268,7 +288,10 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
                     },
                     'latest_repair_plan_path': str(experiment_dir / 'attempt_1' / 'repair_plan_round_1.json'),
                 },
-            ) as mock_replan:
+            ) as mock_replan, patch(
+                'loss_transfer.common.decision_trace._DEFAULT_CASE_MEMORY_PATH',
+                case_memory_path,
+            ):
                 result = run_agent_repair_loop(
                     task_context,
                     analysis_plan_path=str(input_plan_path),
@@ -288,6 +311,8 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             self.assertTrue(Path(result['decision_trace_path']).exists())
             self.assertTrue(Path(result['routing_audit_path']).exists())
             self.assertEqual(result['run_manifest_path'], str(experiment_dir / 'run_manifest.json'))
+            self.assertEqual(result['case_memory_path'], str(case_memory_path.resolve()))
+            self.assertTrue(case_memory_path.exists())
             self.assertEqual(len(call_records), 2)
             self.assertEqual(call_records[1]['attempt_spec']['name'], 'Replanned attempt')
             self.assertEqual(call_records[1]['attempt_spec']['required_edit_paths'], ['sandbox_model_adapter.py'])

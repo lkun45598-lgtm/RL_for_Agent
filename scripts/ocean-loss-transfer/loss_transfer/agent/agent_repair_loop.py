@@ -359,7 +359,6 @@ def run_agent_repair_loop(
     from loss_transfer.attempts.attempt_executor import execute_attempt
     integration_path = resolve_recommended_integration_path(task_context, analysis_plan)
     seen_attempt_signatures = {_attempt_signature(attempt) for attempt in attempts}
-    from loss_transfer.attempts.attempt_executor import execute_attempt
 
     index = 0
     while index < len(attempts) and len(executed_attempts) < max_attempts:

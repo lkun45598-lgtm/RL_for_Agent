@@ -4,7 +4,7 @@
 @author Leizheng
 @contributors kongzhiquan
 @date 2026-03-22
-@version 1.3.0
+@version 1.4.1
 
 @changelog
   - 2026-03-22 Leizheng: v1.0.0 initial version
@@ -14,6 +14,8 @@
     - Layer 1: undefined function detection, variable scoping check, device consistency warning
     - Layer 2: gradient magnitude analysis, multi-shape test, boundary condition test
     - Layer 3/4: timeout recovery with partial metrics parsing
+  - 2026-03-28 kongzhiquan: v1.4.0 restore patchable subprocess wrapper, zero-mask smoke validation, and timeout artifact export
+  - 2026-03-28 kongzhiquan: v1.4.1 write timeout training-curve artifacts to a persistent temp file instead of the candidate-loss directory
 """
 
 import ast
@@ -68,6 +70,67 @@ _BUILTINS = set(__builtins__.keys()) if isinstance(__builtins__, dict) else set(
 _SANDBOX_DIR = SANDBOX_DIR
 _PROJECT_ROOT = PROJECT_ROOT
 _PIPELINE_DIR = TRAINING_PIPELINE_DIR
+
+
+def _run_subprocess_with_combined_log(
+    cmd: List[str],
+    *,
+    cwd: Path,
+    env: Dict[str, str],
+    timeout: int,
+) -> Dict[str, Any]:
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        combined_output = '\n'.join(part for part in (result.stdout, result.stderr) if part)
+        return {
+            'timed_out': False,
+            'returncode': result.returncode,
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'combined_output': combined_output,
+        }
+    except subprocess.TimeoutExpired as exc:
+        stdout = ''
+        stderr = ''
+        if exc.stdout:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else exc.stdout.decode('utf-8', errors='replace')
+        if exc.stderr:
+            stderr = exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode('utf-8', errors='replace')
+        combined_output = '\n'.join(part for part in (stdout, stderr) if part)
+        return {
+            'timed_out': True,
+            'returncode': -9,
+            'stdout': stdout,
+            'stderr': stderr,
+            'combined_output': combined_output,
+        }
+
+
+def _write_training_curve_artifact(
+    *,
+    loss_file_path: str,
+    training_curve: Dict[str, Any],
+) -> Dict[str, str]:
+    fd, artifact_path_str = tempfile.mkstemp(
+        prefix=f'{Path(loss_file_path).stem}_training_curve_',
+        suffix='.json',
+    )
+    os.close(fd)
+    artifact_path = Path(artifact_path_str)
+    artifact_path.write_text(
+        json.dumps(training_curve, indent=2, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    return {
+        'training_curve_path': str(artifact_path),
+    }
 
 
 def _copy_loss_to_sandbox(loss_file_path: str) -> None:
@@ -558,37 +621,39 @@ def validate_single_model(
             sandbox_override_dir=sandbox_override_dir,
         )
         cmd = [_PYTHON, '_run_once.py', '--config', config_path]
+        run_result = _run_subprocess_with_combined_log(
+            cmd,
+            cwd=_SANDBOX_DIR,
+            env=_build_run_env(
+                gpu_id=gpu_id,
+                extra_env={'SANDBOX_OVERRIDE_DIR': sandbox_override_dir} if sandbox_override_dir else None,
+            ),
+            timeout=600,
+        )
+        combined_output = str(run_result.get('combined_output') or '')
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=_SANDBOX_DIR,
-                env=_build_run_env(
-                    gpu_id=gpu_id,
-                    extra_env={'SANDBOX_OVERRIDE_DIR': sandbox_override_dir} if sandbox_override_dir else None,
-                ),
-                capture_output=True,
-                text=True,
-                timeout=600  # 10分钟超时
-            )
-        except subprocess.TimeoutExpired as e:
-            # 改进6: 超时恢复 - 解析已完成的部分结果
-            partial_stdout = ''
-            if e.stdout:
-                partial_stdout = e.stdout if isinstance(e.stdout, str) else e.stdout.decode('utf-8', errors='replace')
-
-            training_curve = parse_training_events(partial_stdout)
+        if run_result.get('timed_out'):
+            training_curve = parse_training_events(combined_output)
             partial_metrics: TrainingMetrics = {}
-            valid_epochs = [ep for ep in training_curve.get('epochs', []) if ep.get('ssim') is not None]
+            valid_epochs = _collect_valid_epochs(training_curve)
             if valid_epochs:
                 last = valid_epochs[-1]
-                partial_metrics = {'val_ssim': last.get('ssim', 0), 'val_psnr': last.get('psnr', 0)}
+                partial_metrics = {
+                    'val_ssim': float(last.get('ssim', 0) or 0),
+                    'val_psnr': float(last.get('psnr', 0) or 0),
+                }
 
-            detail = f'训练超时（>10分钟）'
+            artifact_paths = _write_training_curve_artifact(
+                loss_file_path=loss_file_path,
+                training_curve=training_curve,
+            )
+            detail = '训练超时（>10分钟）'
             if training_curve.get('last_epoch', -1) >= 0:
                 detail += f'，已完成 {training_curve["last_epoch"]} epoch'
                 if valid_epochs:
-                    detail += f'，最后 SSIM={valid_epochs[-1].get("ssim", "?"):.4f}' if isinstance(valid_epochs[-1].get("ssim"), float) else ''
+                    last_ssim = valid_epochs[-1].get('ssim')
+                    if isinstance(last_ssim, (int, float)):
+                        detail += f'，最后 SSIM={float(last_ssim):.4f}'
                 detail += f'，趋势: {training_curve.get("trend", "unknown")}'
 
             return {
@@ -597,11 +662,13 @@ def validate_single_model(
                 'detail': detail,
                 'partial_metrics': partial_metrics,
                 'training_curve': training_curve,
+                'artifact_paths': artifact_paths,
             }
 
-        if result.returncode != 0:
+        returncode = int(run_result.get('returncode', 0) or 0)
+        if returncode != 0:
             # 训练崩溃
-            stderr = result.stderr
+            stderr = str(run_result.get('stderr') or '')
 
             if 'CUDA out of memory' in stderr:
                 return {
@@ -624,8 +691,7 @@ def validate_single_model(
                 }
 
         # 解析指标
-        stdout = result.stdout
-        training_curve = parse_training_events(stdout)
+        training_curve = parse_training_events(combined_output)
         valid_epochs = _collect_valid_epochs(training_curve)
         nan_metrics = _collect_nan_metrics(training_curve)
 
@@ -662,8 +728,8 @@ def validate_single_model(
                 val_ssim = float(last_valid['ssim'])  # type: ignore[arg-type]
                 val_psnr = float(last_valid['psnr'])  # type: ignore[arg-type]
             else:
-                ssim_match = re.search(r'val_ssim:\s+([\d.]+)', stdout)
-                psnr_match = re.search(r'val_psnr:\s+([\d.]+)', stdout)
+                ssim_match = re.search(r'val_ssim:\s+([\d.]+)', combined_output)
+                psnr_match = re.search(r'val_psnr:\s+([\d.]+)', combined_output)
                 if not ssim_match or not psnr_match:
                     raise ValueError("Missing val_ssim or val_psnr in output")
                 val_ssim = float(ssim_match.group(1))
@@ -790,6 +856,43 @@ def validate_smoke(loss_file_path: str, formula_spec_path: Optional[str] = None)
                 'detail': 'mask=None 时失败'
             }
 
+        # 测试 zero-mask 输出是否保持在计算图上
+        pred_zero_mask = pred.detach().clone().requires_grad_(True)
+        target_zero_mask = target.detach().clone()
+        zero_mask = torch.zeros_like(mask)
+        zero_mask_kwargs = build_smoke_loss_kwargs(formula_spec, pred_zero_mask)
+        zero_mask_loss = sandbox_loss(pred_zero_mask, target_zero_mask, mask=zero_mask, **zero_mask_kwargs)
+
+        if not isinstance(zero_mask_loss, torch.Tensor) or zero_mask_loss.dim() != 0:
+            return {
+                'passed': False,
+                'error': 'invalid_zero_mask_output',
+                'detail': 'zero-mask 路径必须返回标量 Tensor',
+            }
+
+        if torch.isnan(zero_mask_loss) or torch.isinf(zero_mask_loss):
+            return {
+                'passed': False,
+                'error': 'invalid_zero_mask_output',
+                'detail': 'zero-mask 路径返回 NaN/Inf',
+            }
+
+        if not zero_mask_loss.requires_grad:
+            return {
+                'passed': False,
+                'error': 'detached_zero_mask_loss',
+                'detail': 'zero-mask 路径返回的 loss 没有连接到 pred 的计算图',
+            }
+
+        pred_zero_mask.grad = None
+        zero_mask_loss.backward()
+        if pred_zero_mask.grad is None:
+            return {
+                'passed': False,
+                'error': 'detached_zero_mask_loss',
+                'detail': 'zero-mask 路径 backward 后没有产生梯度',
+            }
+
         # === 改进2: 梯度幅度分析 ===
         grad_norm_val = float(pred.grad.norm())
         grad_analysis: GradientAnalysis = {
@@ -889,6 +992,7 @@ def validate_smoke(loss_file_path: str, formula_spec_path: Optional[str] = None)
         smoke_detail: SmokeTestDetail = {
             'shapes_tested': shapes_tested,
             'boundary_test_passed': True,
+            'zero_mask_test_passed': True,
             'gradient_analysis': grad_analysis,
         }
 

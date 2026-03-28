@@ -2,7 +2,13 @@
 @file attempt_feedback.py
 @description Pure helpers for summarizing validation feedback and repair history.
 @author OpenAI Codex
+@contributors kongzhiquan
 @date 2026-03-26
+@version 1.1.0
+
+@changelog
+  - 2026-03-26 OpenAI Codex: v1.0.0 initial version
+  - 2026-03-28 kongzhiquan: v1.1.0 omit unset repair summary fields instead of serializing None placeholders
 """
 
 from __future__ import annotations
@@ -59,24 +65,33 @@ def summarize_repair_rounds(repair_rounds: List[Dict[str, Any]]) -> List[Dict[st
     for round_info in repair_rounds[-3:]:
         repair = round_info.get('repair', {})
         repair_payload = repair if isinstance(repair, dict) else {}
-        summary.append(
-            {
-                'round': round_info.get('round'),
-                'status': round_info.get('status'),
-                'trigger_stop_layer': round_info.get('trigger_stop_layer'),
-                'post_stop_layer': round_info.get('post_stop_layer'),
-                'post_error': round_info.get('post_error'),
-                'post_baseline_delta': round_info.get('post_baseline_delta'),
-                'reverted': bool(round_info.get('reverted', False)),
-                'agent_response_path': repair_payload.get('agent_response_path'),
-                'repair_plan_path': repair_payload.get('repair_plan_path'),
-                'repair_hypothesis': (
-                    (repair_payload.get('repair_plan_summary') or {}).get('failure_hypothesis')
-                    if isinstance(repair_payload.get('repair_plan_summary'), dict)
-                    else None
-                ),
-            }
+        summary_item: Dict[str, Any] = {
+            'round': round_info.get('round'),
+            'status': round_info.get('status'),
+            'trigger_stop_layer': round_info.get('trigger_stop_layer'),
+            'post_stop_layer': round_info.get('post_stop_layer'),
+            'post_error': round_info.get('post_error'),
+            'post_baseline_delta': round_info.get('post_baseline_delta'),
+            'reverted': bool(round_info.get('reverted', False)),
+        }
+
+        agent_response_path = repair_payload.get('agent_response_path')
+        if agent_response_path is not None:
+            summary_item['agent_response_path'] = agent_response_path
+
+        repair_plan_path = repair_payload.get('repair_plan_path')
+        if repair_plan_path is not None:
+            summary_item['repair_plan_path'] = repair_plan_path
+
+        repair_hypothesis = (
+            (repair_payload.get('repair_plan_summary') or {}).get('failure_hypothesis')
+            if isinstance(repair_payload.get('repair_plan_summary'), dict)
+            else None
         )
+        if repair_hypothesis is not None:
+            summary_item['repair_hypothesis'] = repair_hypothesis
+
+        summary.append(summary_item)
     return summary
 
 

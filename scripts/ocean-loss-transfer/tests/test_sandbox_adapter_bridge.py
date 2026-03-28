@@ -10,7 +10,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from sandbox_adapter_bridge import build_config_with_adapter  # noqa: E402
+from loss_transfer.formula.sandbox_adapter_bridge import build_config_with_adapter  # noqa: E402
 
 
 class SandboxAdapterBridgeTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class SandboxAdapterBridgeTests(unittest.TestCase):
         }
 
         with patch(
-            'sandbox_adapter_bridge._infer_dataset_metadata',
+            'loss_transfer.formula.sandbox_adapter_bridge._infer_dataset_metadata',
             return_value={
                 'dyn_vars': ['uo', 'vo'],
                 'shape': [400, 800],
