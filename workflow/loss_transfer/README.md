@@ -257,7 +257,6 @@ workflow/loss_transfer/
 - `loss_transfer/ir/extract_loss_ir.py`
 - `loss_transfer/ir/write_loss_ir.py`
 - `loss_transfer/ir/check_compatibility.py`
-- `loss_transfer/generation/generate_patch.py`
 
 现在更推荐这样理解：
 

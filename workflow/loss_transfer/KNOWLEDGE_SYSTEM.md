@@ -77,21 +77,16 @@ agent_artifact_generator.py
 - 当前主流程并不调用
 - 保留会让“case memory 主链”和“旧 innovation 知识库旁路”同时存在，增加维护成本
 
-## 仍然保留的 `knowledge_base/modules/`
+## `knowledge_base/modules/` 的当前状态
 
-`knowledge_base/modules/` 和 `code_generalizer.py` 仍然保留。
+`knowledge_base/modules/` 不属于当前主流程，也不再有仓库内模块负责向这里产出泛化代码。
 
-原因不是它们还代表独立知识库存储，而是：
-
-- `code_generalizer.py` 仍然依赖 `knowledge_base/modules/` 作为代码泛化输出目录
-- 这条线和 `case_memories.jsonl` 不冲突
-
-也就是说：
+现在应当这样理解：
 
 - 结构化经验后端: `case_memories.jsonl`
-- 泛化代码产物目录: `knowledge_base/modules/`
+- `knowledge_base/modules/`: 历史遗留目录，不是当前 Agent 流程的一部分
 
-这两者现在是并列关系，不再是早期文档里的“innovations.yaml + index.json + modules/”三件套。
+也就是说，早期文档里的“innovations.yaml + index.json + modules/”三件套已经不再代表当前架构。
 
 ## 使用建议
 
