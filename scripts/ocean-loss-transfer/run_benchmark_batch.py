@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Sequence
 from build_benchmark_catalog import build_benchmark_catalog
 from loss_transfer.agent.agent_artifact_generator import generate_analysis_plan
 from loss_transfer.agent.agent_repair_loop import run_agent_repair_loop
+from loss_transfer.common.contract_validation import write_contract_validation
+from loss_transfer.common.run_manifest import write_run_manifest
 from loss_transfer.common.trajectory_logger import write_json
 from loss_transfer.context.context_builder import build_task_context
 from materialize_benchmark_entry import materialize_benchmark_entry
@@ -178,15 +180,25 @@ def _aggregate_jsonl_artifact(
 
 
 def _derive_overall_status(entry_summary: Dict[str, Any], *, mode: str) -> str:
+    context_status = str(entry_summary.get('context_status') or '')
+    plan_status = str(entry_summary.get('plan_status') or '')
+    loop_status = str(entry_summary.get('loop_status') or '')
+    if context_status == 'context_error':
+        return 'context_error'
+    if plan_status == 'contract_error':
+        return 'contract_error'
+    if loop_status == 'contract_error':
+        return 'contract_error'
+
     error_summary = entry_summary.get('error_summary')
     if isinstance(error_summary, str) and error_summary:
         return 'error'
 
     if mode == 'agent_loop':
-        return str(entry_summary.get('loop_status') or 'unknown')
+        return loop_status or 'unknown'
     if mode == 'plan_only':
-        return str(entry_summary.get('plan_status') or entry_summary.get('context_status') or 'unknown')
-    return str(entry_summary.get('context_status') or 'unknown')
+        return plan_status or context_status or 'unknown'
+    return context_status or 'unknown'
 
 
 def _run_single_entry(
@@ -255,10 +267,44 @@ def _run_single_entry(
                 'experiment_dir': paths.get('experiment_dir'),
                 'task_context_path': paths.get('task_context_path'),
                 'loss_formula_path': paths.get('loss_formula_path'),
+                'run_manifest_path': paths.get('run_manifest_path'),
                 'analysis_plan_path': paths.get('analysis_plan_path'),
+                'contract_validation_path': paths.get('contract_validation_path'),
                 'trajectory_path': paths.get('trajectory_path'),
             }
         )
+        write_run_manifest(
+            experiment_dir=entry_output_dir,
+            paper_slug=str(entry['paper_slug']),
+            task_context=task_context,
+            mode=mode,
+            bootstrap_formula=bootstrap_formula,
+            max_attempts=max_attempts,
+            auto_generate_plan=auto_generate_plan,
+            service_url=service_url,
+        )
+        context_validation = write_contract_validation(
+            experiment_dir=entry_output_dir,
+            paper_slug=str(entry['paper_slug']),
+            task_context=task_context,
+        )
+        summary['contract_validation_path'] = context_validation.get('contract_validation_path')
+        summary['context_validation_status'] = context_validation.get('status')
+        write_run_manifest(
+            experiment_dir=entry_output_dir,
+            paper_slug=str(entry['paper_slug']),
+            task_context=task_context,
+            mode=mode,
+            bootstrap_formula=bootstrap_formula,
+            max_attempts=max_attempts,
+            auto_generate_plan=auto_generate_plan,
+            service_url=service_url,
+        )
+        if context_validation.get('status') == 'error':
+            summary['context_status'] = 'context_error'
+            summary['error_summary'] = '; '.join(context_validation.get('errors', [])) or 'task_context contract validation failed'
+            summary['overall_status'] = _derive_overall_status(summary, mode=mode)
+            return summary
 
         analysis_plan_path = paths.get('analysis_plan_path') if isinstance(paths.get('analysis_plan_path'), str) else None
         if mode in {'plan_only', 'agent_loop'} and auto_generate_plan:
@@ -285,6 +331,32 @@ def _run_single_entry(
             if isinstance(analysis_plan_path, str) and Path(analysis_plan_path).exists()
             else None
         )
+
+        if mode == 'plan_only' and existing_plan_path:
+            plan_validation = write_contract_validation(
+                experiment_dir=entry_output_dir,
+                paper_slug=str(entry['paper_slug']),
+                task_context=task_context,
+                analysis_plan_path=existing_plan_path,
+            )
+            summary['contract_validation_path'] = plan_validation.get('contract_validation_path')
+            summary['plan_contract_status'] = plan_validation.get('status')
+            write_run_manifest(
+                experiment_dir=entry_output_dir,
+                paper_slug=str(entry['paper_slug']),
+                task_context=task_context,
+                mode=mode,
+                bootstrap_formula=bootstrap_formula,
+                max_attempts=max_attempts,
+                auto_generate_plan=auto_generate_plan,
+                service_url=service_url,
+                analysis_plan_path=existing_plan_path,
+            )
+            if plan_validation.get('status') == 'error':
+                summary['plan_status'] = 'contract_error'
+                summary['error_summary'] = '; '.join(plan_validation.get('errors', [])) or 'analysis plan contract validation failed'
+                summary['overall_status'] = _derive_overall_status(summary, mode=mode)
+                return summary
 
         if mode == 'agent_loop':
             loop_result = run_agent_repair_loop(
@@ -318,11 +390,15 @@ def _run_single_entry(
                     'attempt_count': loop_result.get('attempt_count'),
                     'best_reward_summary': loop_result.get('best_reward_summary'),
                     'best_strategy_delta': loop_result.get('best_strategy_delta'),
+                    'run_manifest_path': loop_result.get('run_manifest_path', summary.get('run_manifest_path')),
                     'trajectory_path': loop_result.get('trajectory_path', summary.get('trajectory_path')),
+                    'contract_validation_path': loop_result.get('contract_validation_path', summary.get('contract_validation_path')),
                 }
             )
             if summary.get('loop_status') == 'completed_with_failures':
                 summary['error_summary'] = _extract_loop_error(loop_result)
+            elif summary.get('loop_status') == 'contract_error':
+                summary['error_summary'] = '; '.join(loop_result.get('contract_validation_errors', [])) or 'contract validation failed'
 
         summary['overall_status'] = _derive_overall_status(summary, mode=mode)
         return summary

@@ -8,34 +8,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from loss_transfer.agent.agent_artifact_generator import generate_followup_attempt
-from loss_transfer.agent.validate_analysis_plan import validate_analysis_plan
 from loss_transfer.attempts.integration_policy import merge_attempt_with_edit_policy, resolve_recommended_integration_path
+from loss_transfer.common.contract_validation import write_contract_validation
 from loss_transfer.common.decision_trace import write_decision_trace
+from loss_transfer.common.run_manifest import write_run_manifest
 from loss_transfer.common.trajectory_logger import append_trajectory_event, ensure_experiment_dir, write_json
 from loss_transfer.formula.formula_code_generator import supports_formula_codegen
-
-
-def _load_analysis_plan(path: str) -> Dict[str, Any]:
-    data = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(data, dict):
-        raise ValueError('analysis_plan.json must contain a JSON object')
-    validation = validate_analysis_plan(data)
-    if validation['status'] == 'error':
-        raise ValueError(
-            'analysis_plan.json validation failed:\n  - '
-            + '\n  - '.join(validation.get('errors', []))
-        )
-
-    normalized = validation.get('normalized_plan')
-    if not isinstance(normalized, dict):
-        raise ValueError('analysis_plan.json validation did not return a normalized plan')
-    if validation.get('warnings'):
-        normalized['validation_warnings'] = validation['warnings']
-    return normalized
 
 
 def _normalize_attempts(
@@ -179,6 +160,46 @@ def _attempt_signature(attempt: Dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
+def _build_contract_error_result(
+    *,
+    paper_slug: str,
+    task_context: Dict[str, Any],
+    analysis_plan_path: Optional[str],
+    output_dir: Optional[str],
+    bootstrap_formula: bool,
+    max_attempts: int,
+    agent_service_url: Optional[str],
+    initial_manifest: Dict[str, Any],
+    contract_validation: Dict[str, Any],
+) -> Dict[str, Any]:
+    experiment_dir = ensure_experiment_dir(paper_slug, output_dir=output_dir)
+    result = {
+        'status': 'contract_error',
+        'paper_slug': paper_slug,
+        'task_context_path': task_context.get('paths', {}).get('task_context_path'),
+        'analysis_plan_path': analysis_plan_path,
+        'routing_audit_path': contract_validation.get('paths', {}).get('routing_audit_path'),
+        'contract_validation_path': contract_validation.get('contract_validation_path'),
+        'run_manifest_path': initial_manifest.get('run_manifest_path'),
+        'contract_validation_errors': contract_validation.get('errors', []),
+        'contract_validation_warnings': contract_validation.get('warnings', []),
+    }
+    write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=paper_slug,
+        task_context=task_context,
+        mode='agent_loop',
+        bootstrap_formula=bootstrap_formula,
+        max_attempts=max_attempts,
+        auto_generate_plan=analysis_plan_path is None,
+        service_url=agent_service_url,
+        analysis_plan_path=analysis_plan_path,
+        loop_summary=result,
+    )
+    write_json(experiment_dir / 'agent_loop_summary.json', result)
+    return result
+
+
 def run_agent_repair_loop(
     task_context: Dict[str, Any],
     *,
@@ -192,6 +213,17 @@ def run_agent_repair_loop(
 ) -> Dict[str, Any]:
     paper_slug = str(task_context['paper_slug'])
     experiment_dir = ensure_experiment_dir(paper_slug, output_dir=output_dir)
+    initial_manifest = write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=paper_slug,
+        task_context=task_context,
+        mode='agent_loop',
+        bootstrap_formula=bootstrap_formula,
+        max_attempts=max_attempts,
+        auto_generate_plan=analysis_plan_path is None,
+        service_url=agent_service_url,
+        analysis_plan_path=analysis_plan_path,
+    )
 
     append_trajectory_event(
         paper_slug,
@@ -207,8 +239,28 @@ def run_agent_repair_loop(
 
     analysis_plan: Dict[str, Any] = {}
     attempts: List[Dict[str, Any]]
+    contract_validation_result: Dict[str, Any]
     if analysis_plan_path:
-        analysis_plan = _load_analysis_plan(analysis_plan_path)
+        contract_validation_result = write_contract_validation(
+            experiment_dir=experiment_dir,
+            paper_slug=paper_slug,
+            task_context=task_context,
+            analysis_plan_path=analysis_plan_path,
+        )
+        if contract_validation_result.get('status') == 'error':
+            return _build_contract_error_result(
+                paper_slug=paper_slug,
+                task_context=task_context,
+                analysis_plan_path=analysis_plan_path,
+                output_dir=output_dir,
+                bootstrap_formula=bootstrap_formula,
+                max_attempts=max_attempts,
+                agent_service_url=agent_service_url,
+                initial_manifest=initial_manifest,
+                contract_validation=contract_validation_result,
+            )
+        normalized_analysis_plan = contract_validation_result.get('normalized_analysis_plan')
+        analysis_plan = normalized_analysis_plan if isinstance(normalized_analysis_plan, dict) else {}
         write_json(experiment_dir / 'analysis_plan.json', analysis_plan)
         attempts = _normalize_attempts(
             analysis_plan.get('attempts'),
@@ -224,18 +276,81 @@ def run_agent_repair_loop(
         }
         if attempts:
             write_json(experiment_dir / 'analysis_plan.json', analysis_plan)
+        contract_validation_result = write_contract_validation(
+            experiment_dir=experiment_dir,
+            paper_slug=paper_slug,
+            task_context=task_context,
+            analysis_plan=analysis_plan if analysis_plan else None,
+            analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else None,
+        )
+        if contract_validation_result.get('status') == 'error':
+            return _build_contract_error_result(
+                paper_slug=paper_slug,
+                task_context=task_context,
+                analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else None,
+                output_dir=output_dir,
+                bootstrap_formula=bootstrap_formula,
+                max_attempts=max_attempts,
+                agent_service_url=agent_service_url,
+                initial_manifest=initial_manifest,
+                contract_validation=contract_validation_result,
+            )
     else:
         attempts = []
+        contract_validation_result = write_contract_validation(
+            experiment_dir=experiment_dir,
+            paper_slug=paper_slug,
+            task_context=task_context,
+        )
+        if contract_validation_result.get('status') == 'error':
+            return _build_contract_error_result(
+                paper_slug=paper_slug,
+                task_context=task_context,
+                analysis_plan_path=analysis_plan_path,
+                output_dir=output_dir,
+                bootstrap_formula=bootstrap_formula,
+                max_attempts=max_attempts,
+                agent_service_url=agent_service_url,
+                initial_manifest=initial_manifest,
+                contract_validation=contract_validation_result,
+            )
+
+    resolved_analysis_plan_path = (
+        str(experiment_dir / 'analysis_plan.json')
+        if (experiment_dir / 'analysis_plan.json').exists()
+        else analysis_plan_path
+    )
+    routing_audit_result = {
+        'routing_audit_path': contract_validation_result.get('paths', {}).get('routing_audit_path'),
+        'routing_audit': contract_validation_result.get('routing_audit'),
+        'effective_integration_path': contract_validation_result.get('effective_integration_path'),
+        'effective_integration_path_source': contract_validation_result.get('effective_integration_path_source'),
+    }
 
     if not attempts:
         result = {
             'status': 'analysis_required',
             'paper_slug': paper_slug,
             'task_context_path': task_context.get('paths', {}).get('task_context_path'),
+            'routing_audit_path': routing_audit_result.get('routing_audit_path'),
+            'contract_validation_path': contract_validation_result.get('contract_validation_path'),
+            'run_manifest_path': initial_manifest.get('run_manifest_path'),
             'suggested_next_step': (
                 'Read task_context.json, write analysis_plan.json, then rerun with --analysis_plan_json'
             ),
         }
+        write_run_manifest(
+            experiment_dir=experiment_dir,
+            paper_slug=paper_slug,
+            task_context=task_context,
+            mode='agent_loop',
+            bootstrap_formula=bootstrap_formula,
+            max_attempts=max_attempts,
+            auto_generate_plan=analysis_plan_path is None,
+            service_url=agent_service_url,
+            analysis_plan_path=resolved_analysis_plan_path,
+            loop_summary=result,
+        )
         write_json(experiment_dir / 'agent_loop_summary.json', result)
         return result
 
@@ -360,6 +475,10 @@ def run_agent_repair_loop(
         output_dir=output_dir,
     )
     summary.update(
+        routing_audit_result
+    )
+    summary['contract_validation_path'] = contract_validation_result.get('contract_validation_path')
+    summary.update(
         write_decision_trace(
             experiment_dir=experiment_dir,
             paper_slug=paper_slug,
@@ -367,6 +486,21 @@ def run_agent_repair_loop(
             analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else analysis_plan_path,
             trajectory_path=str(experiment_dir / 'trajectory.jsonl'),
             attempts=executed_attempts,
+            routing_audit=routing_audit_result.get('routing_audit'),
+        )
+    )
+    summary.update(
+        write_run_manifest(
+            experiment_dir=experiment_dir,
+            paper_slug=paper_slug,
+            task_context=task_context,
+            mode='agent_loop',
+            bootstrap_formula=bootstrap_formula,
+            max_attempts=max_attempts,
+            auto_generate_plan=analysis_plan_path is None,
+            service_url=agent_service_url,
+            analysis_plan_path=str(experiment_dir / 'analysis_plan.json') if (experiment_dir / 'analysis_plan.json').exists() else analysis_plan_path,
+            loop_summary=summary,
         )
     )
     write_json(experiment_dir / 'agent_loop_summary.json', summary)

@@ -20,9 +20,16 @@ from loss_transfer.agent.agent_edit_workspace import (
     prepare_attempt_edit_workspace as _prepare_attempt_edit_workspace,
     snapshot_editable_targets as _snapshot_editable_targets,
 )
+from loss_transfer.agent.evidence_probe import (
+    execute_evidence_probe,
+    load_json_object as _load_probe_json_object,
+    validate_evidence_probe_request,
+)
 from loss_transfer.agent.agent_service_client import run_agent_chat
 from loss_transfer.agent.validate_analysis_plan import validate_analysis_plan, validate_attempt_spec
 from loss_transfer.common.paths import PROJECT_ROOT
+from loss_transfer.common.run_manifest import append_run_manifest_agent_call, write_run_manifest
+from loss_transfer.common.routing_audit import write_routing_audit
 
 
 _PROJECT_ROOT = PROJECT_ROOT
@@ -38,6 +45,41 @@ def _load_json(path: Path) -> Dict[str, Any]:
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _append_agent_call_manifest(
+    *,
+    task_context: Dict[str, Any],
+    stage: str,
+    response: Dict[str, Any],
+    agent_response_path: Path,
+    mode: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    run_manifest_path = paths.get('run_manifest_path')
+    if not isinstance(run_manifest_path, str) or not run_manifest_path.strip():
+        experiment_dir = paths.get('experiment_dir')
+        if isinstance(experiment_dir, str) and experiment_dir.strip():
+            run_manifest_path = str(Path(experiment_dir).expanduser().resolve() / 'run_manifest.json')
+        else:
+            return None
+
+    call_record: Dict[str, Any] = {
+        'stage': stage,
+        'mode': mode,
+        'status': response.get('status'),
+        'error': response.get('error'),
+        'service_url': response.get('service_url'),
+        'service_url_source': response.get('service_url_source'),
+        'session_scope': response.get('session_scope') or 'new_request_session',
+        'requested_agent_id': response.get('requested_agent_id'),
+        'resolved_agent_id': response.get('agent_id'),
+        'agent_response_path': str(agent_response_path),
+    }
+    if extra:
+        call_record.update(extra)
+    return append_run_manifest_agent_call(run_manifest_path, call_record)
 
 
 def _build_repair_plan_placeholder(failure_feedback: Dict[str, Any]) -> Dict[str, Any]:
@@ -87,6 +129,18 @@ def _validate_repair_plan(plan: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _evidence_refs_contain_prefix(evidence_refs: Any, prefix: str) -> bool:
+    if not isinstance(evidence_refs, list):
+        return False
+    normalized_prefix = prefix.strip()
+    if not normalized_prefix:
+        return False
+    return any(
+        isinstance(item, str) and item.strip().startswith(normalized_prefix)
+        for item in evidence_refs
+    )
+
+
 def _resolve_working_dir(task_context: Dict[str, Any]) -> Path:
     code_repo = ((task_context.get('inputs') or {}) if isinstance(task_context.get('inputs'), dict) else {}).get('code_repo_path')
     if isinstance(code_repo, str) and code_repo.strip():
@@ -102,15 +156,30 @@ def _build_analysis_plan_prompt(
     task_context_path: Path,
     analysis_plan_path: Path,
     max_attempts: int,
+    evidence_probe_result_path: Optional[Path] = None,
 ) -> str:
     integration = task_context.get('integration_assessment', {}) if isinstance(task_context.get('integration_assessment'), dict) else {}
-    recommended_path = integration.get('recommended_path', 'agent_decides')
+    recommended_path = integration.get('recommended_path')
     requires_model_changes = integration.get('requires_model_changes')
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    evidence_graph_path = paths.get('evidence_graph_path')
+    evidence_graph_line = (
+        f"- evidence_graph.json: {evidence_graph_path}"
+        if isinstance(evidence_graph_path, str) and evidence_graph_path.strip()
+        else "- evidence_graph.json: (not provided)"
+    )
+    probe_result_line = (
+        f"- analysis_evidence_probe_result.json: {evidence_probe_result_path}"
+        if evidence_probe_result_path is not None
+        else "- analysis_evidence_probe_result.json: (no extra evidence probe was needed)"
+    )
 
     return f"""你在执行 loss-transfer 的分析阶段。
 
 请先读取这个文件：
 - task_context.json: {task_context_path}
+{evidence_graph_line}
+{probe_result_line}
 
 然后写出：
 - analysis_plan.json: {analysis_plan_path}
@@ -125,6 +194,7 @@ def _build_analysis_plan_prompt(
 7. 如果 kind=agent_code，但你还不想直接内嵌完整代码，请填写 objective，后续自动代码生成器会继续接管。
 8. 如果你已经非常确定，也可以直接在 attempt 里给 code 或 code_path。
 9. 优先最小改动；但如果 integration_assessment 明确要求更深改动，就要诚实写出来。
+10. 如果 analysis_evidence_probe_result.json 存在，必须吸收里面的发现；不要忽略你自己补采集出来的证据。
 
 当前 task_context 给出的信号：
 - recommended_path = {recommended_path}
@@ -133,6 +203,232 @@ def _build_analysis_plan_prompt(
 写完文件后，只回复一行简短确认：
 plan_written:{analysis_plan_path}
 """
+
+
+def _build_analysis_evidence_probe_prompt(
+    *,
+    task_context_path: Path,
+    probe_request_path: Path,
+    probe_script_path: Path,
+    probe_result_path: Path,
+) -> str:
+    return f"""你在执行 loss-transfer 的分析补证据阶段。
+
+请先读取：
+- task_context.json: {task_context_path}
+
+然后判断：仅凭当前 task_context / paper / code evidence 是否已经足够生成 analysis_plan。
+
+你必须先写出：
+- analysis_evidence_probe_request.json: {probe_request_path}
+
+如果你认为证据已经足够：
+1. 把 request.json 写成单个 JSON object，字段至少包含：
+   - status: "not_needed"
+   - reason: 为什么现有证据已经足够
+   - evidence_refs: 你依赖的 task_context/paper/code 引用
+2. 不要写 probe 脚本。
+
+如果你认为证据还不够：
+1. 把 request.json 写成单个 JSON object，字段至少包含：
+   - status: "probe_needed"
+   - reason: 为什么现有证据还不够
+   - evidence_refs: 已有但仍不足的依据
+   - probe_goal: 你还需要验证什么
+   - expected_output_keys: 你希望 probe 产出的关键 JSON 字段名
+2. 同时写一个只读 Python 脚本：
+   - analysis_evidence_probe.py: {probe_script_path}
+3. 脚本运行方式固定为：
+   `python analysis_evidence_probe.py --code_repo <repo> --task_context <task_context> --output <json>`
+4. 脚本必须只做“读取仓库 + 解析信息 + 写 JSON 到输出路径 {probe_result_path}”。
+5. 禁止修改 code_repo 内任何文件，禁止训练、禁止联网、禁止长时间阻塞。
+6. 优先使用标准库做静态分析，例如 `ast/json/re/pathlib`；这是分析工具，不是实现补丁。
+
+写完之后，只回复一行简短确认：
+probe_written:{probe_request_path}
+"""
+
+
+def _run_analysis_evidence_probe(
+    *,
+    task_context: Dict[str, Any],
+    task_context_file: Path,
+    experiment_dir: Path,
+    working_dir: Path,
+    service_url: Optional[str],
+    api_key: Optional[str],
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    probe_request_path = Path(
+        str(paths.get('analysis_evidence_probe_request_path') or experiment_dir / 'analysis_evidence_probe_request.json')
+    ).expanduser().resolve()
+    probe_script_path = Path(
+        str(paths.get('analysis_evidence_probe_script_path') or experiment_dir / 'analysis_evidence_probe.py')
+    ).expanduser().resolve()
+    probe_result_path = Path(
+        str(paths.get('analysis_evidence_probe_result_path') or experiment_dir / 'analysis_evidence_probe_result.json')
+    ).expanduser().resolve()
+    notebook_path = experiment_dir / 'analysis_evidence_probe_agent.ipynb'
+    files = [str(task_context_file)]
+    evidence_graph_path = paths.get('evidence_graph_path')
+    if isinstance(evidence_graph_path, str) and evidence_graph_path.strip():
+        evidence_graph_file = Path(evidence_graph_path).expanduser().resolve()
+        if evidence_graph_file.exists():
+            files.append(str(evidence_graph_file))
+
+    response = run_agent_chat(
+        message=_build_analysis_evidence_probe_prompt(
+            task_context_path=task_context_file,
+            probe_request_path=probe_request_path,
+            probe_script_path=probe_script_path,
+            probe_result_path=probe_result_path,
+        ),
+        mode='edit',
+        working_dir=str(working_dir),
+        outputs_path=str(experiment_dir),
+        notebook_path=str(notebook_path),
+        files=files,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+
+    log_path = experiment_dir / 'analysis_evidence_probe_agent_response.json'
+    _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=task_context,
+        stage='analysis_evidence_probe_generation',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+        },
+    )
+
+    if response.get('status') == 'error':
+        return {
+            'status': 'error',
+            'error': response.get('error'),
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if not probe_request_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Agent finished but did not write analysis_evidence_probe_request.json to {probe_request_path}',
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    request_payload = _load_probe_json_object(probe_request_path)
+    validation = validate_evidence_probe_request(request_payload)
+    normalized_request = validation.get('normalized_request')
+    if validation.get('status') == 'error' or not isinstance(normalized_request, dict):
+        return {
+            'status': 'error',
+            'error': 'analysis_evidence_probe_request.json validation failed',
+            'validation': validation,
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if normalized_request.get('status') == 'not_needed':
+        return {
+            'status': 'not_needed',
+            'validation': validation,
+            'request': normalized_request,
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': None,
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if not probe_script_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Probe was requested but analysis_evidence_probe.py was not written to {probe_script_path}',
+            'validation': validation,
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    code_repo_path = ((task_context.get('inputs') or {}) if isinstance(task_context.get('inputs'), dict) else {}).get('code_repo_path')
+    if not isinstance(code_repo_path, str) or not code_repo_path.strip():
+        return {
+            'status': 'error',
+            'error': 'Probe was requested but task_context.inputs.code_repo_path is missing',
+            'validation': validation,
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    execution = execute_evidence_probe(
+        script_path=probe_script_path,
+        code_repo_path=code_repo_path,
+        task_context_path=task_context_file,
+        output_path=probe_result_path,
+        timeout_sec=min(timeout_sec, 120),
+    )
+    if execution.get('status') != 'success':
+        return {
+            'status': 'error',
+            'error': execution.get('error'),
+            'validation': validation,
+            'execution': execution,
+            'analysis_evidence_probe_request_path': str(probe_request_path),
+            'analysis_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    return {
+        'status': 'success',
+        'validation': validation,
+        'request': normalized_request,
+        'execution': execution,
+        'analysis_evidence_probe_request_path': str(probe_request_path),
+        'analysis_evidence_probe_result_path': str(probe_result_path),
+        'agent_response_path': str(log_path),
+        'agent_id': response.get('agent_id'),
+        'session_scope': response.get('session_scope'),
+        'service_url': response.get('service_url'),
+        'service_url_source': response.get('service_url_source'),
+    }
 
 
 def _build_candidate_loss_prompt(
@@ -206,6 +502,8 @@ def _build_candidate_loss_repair_prompt(
     current_code_path: Path,
     output_code_path: Path,
     repair_plan_path: Path,
+    failure_feedback_path: Optional[Path],
+    evidence_probe_result_path: Optional[Path],
     attempt_spec: Dict[str, Any],
     failure_feedback: Dict[str, Any],
 ) -> str:
@@ -213,6 +511,16 @@ def _build_candidate_loss_repair_prompt(
     feedback_json = json.dumps(failure_feedback, indent=2, ensure_ascii=False)
     analysis_plan_line = f"- analysis_plan.json: {analysis_plan_path}" if analysis_plan_path else "- analysis_plan.json: (not provided)"
     formula_line = f"- loss_formula.json: {loss_formula_path}" if loss_formula_path else "- loss_formula.json: (read it from task_context if present)"
+    failure_feedback_line = (
+        f"- failure_feedback.json: {failure_feedback_path}"
+        if failure_feedback_path is not None
+        else "- failure_feedback.json: (inline payload only)"
+    )
+    probe_result_line = (
+        f"- repair_evidence_probe_result.json: {evidence_probe_result_path}"
+        if evidence_probe_result_path is not None
+        else "- repair_evidence_probe_result.json: (no extra evidence probe was needed)"
+    )
     editable_targets_block = _format_editable_targets(editable_targets)
     required_edit_paths = _normalize_required_edit_paths(attempt_spec)
     required_paths_line = (
@@ -227,6 +535,8 @@ def _build_candidate_loss_repair_prompt(
 - task_context.json: {task_context_path}
 {analysis_plan_line}
 {formula_line}
+{failure_feedback_line}
+{probe_result_line}
 - editable_files.json: {editable_manifest_path}
 - current candidate_loss.py: {current_code_path}
 - repair_plan.json: {repair_plan_path}
@@ -268,7 +578,8 @@ def _build_candidate_loss_repair_prompt(
     - success_criteria: 字符串，说明本轮希望达到什么验证结果
     - fallback_plan: 字符串，说明如果本轮失败下一步准备怎么退路
     - evidence_refs: 字符串数组，引用 paper/code/validator feedback 的依据
-15. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写回目标路径。
+15. 如果 repair_evidence_probe_result.json 存在，repair_plan.evidence_refs 必须显式引用它，不要忽略你自己补采集出来的证据。
+16. 不要输出 markdown 代码块，不要只在聊天里贴代码，必须把文件真正写回目标路径。
 
 写完之后，只回复一行简短确认：
 code_written:{output_code_path}
@@ -305,6 +616,264 @@ def _resolve_latest_repair_plan_path(attempt_result: Dict[str, Any]) -> Optional
     return None
 
 
+def _build_candidate_loss_repair_evidence_probe_prompt(
+    *,
+    task_context_path: Path,
+    analysis_plan_path: Optional[Path],
+    current_code_path: Path,
+    repair_plan_path: Path,
+    failure_feedback_path: Optional[Path],
+    probe_request_path: Path,
+    probe_script_path: Path,
+    probe_result_path: Path,
+) -> str:
+    analysis_plan_line = (
+        f"- analysis_plan.json: {analysis_plan_path}"
+        if analysis_plan_path
+        else "- analysis_plan.json: (not provided)"
+    )
+    failure_feedback_line = (
+        f"- failure_feedback.json: {failure_feedback_path}"
+        if failure_feedback_path is not None
+        else "- failure_feedback.json: (not provided)"
+    )
+
+    return f"""你在执行 loss-transfer 的代码修复补证据阶段。
+
+请先读取：
+- task_context.json: {task_context_path}
+{analysis_plan_line}
+- current candidate_loss.py: {current_code_path}
+- repair_plan.json: {repair_plan_path}
+{failure_feedback_line}
+
+然后判断：仅凭当前失败反馈、当前代码和 repair plan 占位信息，是否已经足够开始修复。
+
+你必须先写出：
+- repair_evidence_probe_request.json: {probe_request_path}
+
+如果你认为证据已经足够：
+1. 把 request.json 写成单个 JSON object，字段至少包含：
+   - status: "not_needed"
+   - reason: 为什么现有修复证据已经足够
+   - evidence_refs: 你依赖的 result/code/repair_plan/task_context 引用
+2. 不要写 probe 脚本。
+
+如果你认为证据还不够：
+1. 把 request.json 写成单个 JSON object，字段至少包含：
+   - status: "probe_needed"
+   - reason: 为什么现有修复证据还不够
+   - evidence_refs: 已有但仍不足的依据
+   - probe_goal: 你还需要验证什么
+   - expected_output_keys: 你希望 probe 产出的关键 JSON 字段名
+2. 同时写一个只读 Python 脚本：
+   - repair_evidence_probe.py: {probe_script_path}
+3. 脚本运行方式固定为：
+   `python repair_evidence_probe.py --code_repo <repo> --task_context <task_context> --current_code <py> [--analysis_plan <json>] [--failure_feedback <json>] [--repair_plan <json>] --output <json>`
+4. 脚本必须只做“读取仓库/工件 + 解析信息 + 写 JSON 到输出路径 {probe_result_path}”。
+5. 禁止修改 code_repo 内任何文件，禁止训练、禁止联网、禁止长时间阻塞。
+6. 优先使用标准库做静态分析，例如 `ast/json/re/pathlib`；这是分析工具，不是实现补丁。
+
+写完之后，只回复一行简短确认：
+probe_written:{probe_request_path}
+"""
+
+
+def _run_candidate_loss_repair_evidence_probe(
+    *,
+    context: Dict[str, Any],
+    failure_feedback: Dict[str, Any],
+    service_url: Optional[str],
+    api_key: Optional[str],
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    output_path = context['output_path']
+    task_context_file = context['task_context_file']
+    current_code_path = context['output_path']
+    repair_plan_path = context['repair_plan_path'] or (output_path.parent / 'repair_plan.json')
+    probe_request_path = output_path.parent / 'repair_evidence_probe_request.json'
+    probe_script_path = output_path.parent / 'repair_evidence_probe.py'
+    probe_result_path = output_path.parent / 'repair_evidence_probe_result.json'
+    notebook_path = output_path.parent / 'candidate_loss_repair_evidence_probe_agent.ipynb'
+
+    files = [str(task_context_file), str(current_code_path), str(repair_plan_path)]
+    resolved_analysis_plan = context.get('resolved_analysis_plan')
+    if isinstance(resolved_analysis_plan, Path) and resolved_analysis_plan.exists():
+        files.append(str(resolved_analysis_plan))
+    failure_feedback_path = context.get('failure_feedback_path')
+    if isinstance(failure_feedback_path, Path) and failure_feedback_path.exists():
+        files.append(str(failure_feedback_path))
+
+    response = run_agent_chat(
+        message=_build_candidate_loss_repair_evidence_probe_prompt(
+            task_context_path=task_context_file,
+            analysis_plan_path=resolved_analysis_plan if isinstance(resolved_analysis_plan, Path) and resolved_analysis_plan.exists() else None,
+            current_code_path=current_code_path,
+            repair_plan_path=repair_plan_path,
+            failure_feedback_path=failure_feedback_path if isinstance(failure_feedback_path, Path) and failure_feedback_path.exists() else None,
+            probe_request_path=probe_request_path,
+            probe_script_path=probe_script_path,
+            probe_result_path=probe_result_path,
+        ),
+        mode='edit',
+        working_dir=str(context['working_dir']),
+        outputs_path=str(context['experiment_dir']),
+        notebook_path=str(notebook_path),
+        files=files,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+
+    log_path = output_path.parent / 'candidate_loss_repair_evidence_probe_agent_response.json'
+    _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=context['task_context'],
+        stage='candidate_loss_repair_evidence_probe_generation',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'attempt_name': context.get('attempt_spec', {}).get('name') if isinstance(context.get('attempt_spec'), dict) else None,
+            'attempt_kind': context.get('attempt_spec', {}).get('kind') if isinstance(context.get('attempt_spec'), dict) else None,
+            'code_path': str(output_path),
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+        },
+    )
+
+    if response.get('status') == 'error':
+        return {
+            'status': 'error',
+            'error': response.get('error'),
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if not probe_request_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Agent finished but did not write repair_evidence_probe_request.json to {probe_request_path}',
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    request_payload = _load_probe_json_object(probe_request_path)
+    validation = validate_evidence_probe_request(request_payload)
+    normalized_request = validation.get('normalized_request')
+    if validation.get('status') == 'error' or not isinstance(normalized_request, dict):
+        return {
+            'status': 'error',
+            'error': 'repair_evidence_probe_request.json validation failed',
+            'validation': validation,
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if normalized_request.get('status') == 'not_needed':
+        return {
+            'status': 'not_needed',
+            'validation': validation,
+            'request': normalized_request,
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': None,
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if not probe_script_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Probe was requested but repair_evidence_probe.py was not written to {probe_script_path}',
+            'validation': validation,
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    code_repo_path = ((context['task_context'].get('inputs') or {}) if isinstance(context['task_context'].get('inputs'), dict) else {}).get('code_repo_path')
+    if not isinstance(code_repo_path, str) or not code_repo_path.strip():
+        return {
+            'status': 'error',
+            'error': 'Probe was requested but task_context.inputs.code_repo_path is missing',
+            'validation': validation,
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    extra_args = ['--current_code', str(current_code_path)]
+    if isinstance(resolved_analysis_plan, Path) and resolved_analysis_plan.exists():
+        extra_args.extend(['--analysis_plan', str(resolved_analysis_plan)])
+    if isinstance(failure_feedback_path, Path) and failure_feedback_path.exists():
+        extra_args.extend(['--failure_feedback', str(failure_feedback_path)])
+    if isinstance(repair_plan_path, Path) and repair_plan_path.exists():
+        extra_args.extend(['--repair_plan', str(repair_plan_path)])
+
+    execution = execute_evidence_probe(
+        script_path=probe_script_path,
+        code_repo_path=code_repo_path,
+        task_context_path=task_context_file,
+        output_path=probe_result_path,
+        timeout_sec=min(timeout_sec, 120),
+        extra_args=extra_args,
+    )
+    if execution.get('status') != 'success':
+        return {
+            'status': 'error',
+            'error': execution.get('error'),
+            'validation': validation,
+            'execution': execution,
+            'repair_evidence_probe_request_path': str(probe_request_path),
+            'repair_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    return {
+        'status': 'success',
+        'validation': validation,
+        'request': normalized_request,
+        'execution': execution,
+        'repair_evidence_probe_request_path': str(probe_request_path),
+        'repair_evidence_probe_result_path': str(probe_result_path),
+        'agent_response_path': str(log_path),
+        'agent_id': response.get('agent_id'),
+        'session_scope': response.get('session_scope'),
+        'service_url': response.get('service_url'),
+        'service_url_source': response.get('service_url_source'),
+    }
+
+
 def _build_followup_attempt_prompt(
     *,
     task_context_path: Path,
@@ -312,6 +881,7 @@ def _build_followup_attempt_prompt(
     latest_attempt_result_path: Path,
     latest_repair_plan_path: Optional[Path],
     trajectory_path: Optional[Path],
+    evidence_probe_result_path: Optional[Path],
     output_attempt_path: Path,
     max_attempts: int,
     next_attempt_id: int,
@@ -323,6 +893,11 @@ def _build_followup_attempt_prompt(
         else "- latest repair_plan.json: (not available)"
     )
     trajectory_line = f"- trajectory.jsonl: {trajectory_path}" if trajectory_path else "- trajectory.jsonl: (not available)"
+    probe_result_line = (
+        f"- followup_evidence_probe_result.json: {evidence_probe_result_path}"
+        if evidence_probe_result_path
+        else "- followup_evidence_probe_result.json: (no extra evidence probe was needed)"
+    )
 
     return f"""你在执行 loss-transfer 的逐轮重规划阶段。
 
@@ -332,6 +907,7 @@ def _build_followup_attempt_prompt(
 - latest attempt result.json: {latest_attempt_result_path}
 {repair_plan_line}
 {trajectory_line}
+{probe_result_line}
 
 然后写出：
 - next_attempt.json: {output_attempt_path}
@@ -354,10 +930,276 @@ def _build_followup_attempt_prompt(
     - what_changes_now
     - why_not_repeat_previous
     - expected_signal
+10. 如果 followup_evidence_probe_result.json 存在，必须吸收里面的发现；不要忽略你自己补采集出来的证据。
 
 写完之后，只回复一行简短确认：
 attempt_written:{output_attempt_path}
 """
+
+
+def _build_followup_evidence_probe_prompt(
+    *,
+    task_context_path: Path,
+    latest_attempt_result_path: Path,
+    latest_repair_plan_path: Optional[Path],
+    analysis_plan_path: Optional[Path],
+    trajectory_path: Optional[Path],
+    probe_request_path: Path,
+    probe_script_path: Path,
+    probe_result_path: Path,
+) -> str:
+    repair_plan_line = (
+        f"- latest repair_plan.json: {latest_repair_plan_path}"
+        if latest_repair_plan_path
+        else "- latest repair_plan.json: (not available)"
+    )
+    analysis_plan_line = (
+        f"- analysis_plan.json: {analysis_plan_path}"
+        if analysis_plan_path
+        else "- analysis_plan.json: (not provided)"
+    )
+    trajectory_line = (
+        f"- trajectory.jsonl: {trajectory_path}"
+        if trajectory_path
+        else "- trajectory.jsonl: (not available)"
+    )
+
+    return f"""你在执行 loss-transfer 的逐轮重规划补证据阶段。
+
+请先读取：
+- task_context.json: {task_context_path}
+- latest attempt result.json: {latest_attempt_result_path}
+{repair_plan_line}
+{analysis_plan_line}
+{trajectory_line}
+
+然后判断：仅凭当前失败证据，是否已经足够生成下一条 follow-up attempt。
+
+你必须先写出：
+- followup_evidence_probe_request.json: {probe_request_path}
+
+如果你认为证据已经足够：
+1. 把 request.json 写成单个 JSON object，字段至少包含：
+   - status: "not_needed"
+   - reason: 为什么现有失败证据已经足够
+   - evidence_refs: 你依赖的 result/repair_plan/task_context 引用
+2. 不要写 probe 脚本。
+
+如果你认为证据还不够：
+1. 把 request.json 写成单个 JSON object，字段至少包含：
+   - status: "probe_needed"
+   - reason: 为什么现有失败证据还不够
+   - evidence_refs: 已有但仍不足的依据
+   - probe_goal: 你还需要验证什么
+   - expected_output_keys: 你希望 probe 产出的关键 JSON 字段名
+2. 同时写一个只读 Python 脚本：
+   - followup_evidence_probe.py: {probe_script_path}
+3. 脚本运行方式固定为：
+   `python followup_evidence_probe.py --code_repo <repo> --task_context <task_context> --latest_result <json> [--latest_repair_plan <json>] [--analysis_plan <json>] [--trajectory <jsonl>] --output <json>`
+4. 脚本必须只做“读取仓库/工件 + 解析信息 + 写 JSON 到输出路径 {probe_result_path}”。
+5. 禁止修改 code_repo 内任何文件，禁止训练、禁止联网、禁止长时间阻塞。
+6. 优先使用标准库做静态分析，例如 `ast/json/re/pathlib`；这是分析工具，不是实现补丁。
+
+写完之后，只回复一行简短确认：
+probe_written:{probe_request_path}
+"""
+
+
+def _run_followup_evidence_probe(
+    *,
+    task_context: Dict[str, Any],
+    task_context_file: Path,
+    latest_result_file: Path,
+    latest_repair_plan: Optional[Path],
+    resolved_analysis_plan: Optional[Path],
+    trajectory_path: Optional[Path],
+    output_path: Path,
+    resolved_next_attempt_id: int,
+    working_dir: Path,
+    service_url: Optional[str],
+    api_key: Optional[str],
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    probe_request_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_evidence_probe_request.json'
+    probe_script_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_evidence_probe.py'
+    probe_result_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_evidence_probe_result.json'
+    notebook_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_evidence_probe_agent.ipynb'
+
+    files = [str(task_context_file), str(latest_result_file)]
+    if latest_repair_plan is not None and latest_repair_plan.exists():
+        files.append(str(latest_repair_plan))
+    if resolved_analysis_plan is not None and resolved_analysis_plan.exists():
+        files.append(str(resolved_analysis_plan))
+    if trajectory_path is not None and trajectory_path.exists():
+        files.append(str(trajectory_path))
+
+    response = run_agent_chat(
+        message=_build_followup_evidence_probe_prompt(
+            task_context_path=task_context_file,
+            latest_attempt_result_path=latest_result_file,
+            latest_repair_plan_path=latest_repair_plan if latest_repair_plan and latest_repair_plan.exists() else None,
+            analysis_plan_path=resolved_analysis_plan if resolved_analysis_plan and resolved_analysis_plan.exists() else None,
+            trajectory_path=trajectory_path if trajectory_path and trajectory_path.exists() else None,
+            probe_request_path=probe_request_path,
+            probe_script_path=probe_script_path,
+            probe_result_path=probe_result_path,
+        ),
+        mode='edit',
+        working_dir=str(working_dir),
+        outputs_path=str(output_path.parent),
+        notebook_path=str(notebook_path),
+        files=files,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+
+    log_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_evidence_probe_agent_response.json'
+    _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=task_context,
+        stage='followup_attempt_evidence_probe_generation',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'attempt_path': str(output_path),
+            'next_attempt_id': resolved_next_attempt_id,
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+        },
+    )
+
+    if response.get('status') == 'error':
+        return {
+            'status': 'error',
+            'error': response.get('error'),
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if not probe_request_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Agent finished but did not write followup_evidence_probe_request.json to {probe_request_path}',
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    request_payload = _load_probe_json_object(probe_request_path)
+    validation = validate_evidence_probe_request(request_payload)
+    normalized_request = validation.get('normalized_request')
+    if validation.get('status') == 'error' or not isinstance(normalized_request, dict):
+        return {
+            'status': 'error',
+            'error': 'followup_evidence_probe_request.json validation failed',
+            'validation': validation,
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if normalized_request.get('status') == 'not_needed':
+        return {
+            'status': 'not_needed',
+            'validation': validation,
+            'request': normalized_request,
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': None,
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    if not probe_script_path.exists():
+        return {
+            'status': 'error',
+            'error': f'Probe was requested but followup_evidence_probe.py was not written to {probe_script_path}',
+            'validation': validation,
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    code_repo_path = ((task_context.get('inputs') or {}) if isinstance(task_context.get('inputs'), dict) else {}).get('code_repo_path')
+    if not isinstance(code_repo_path, str) or not code_repo_path.strip():
+        return {
+            'status': 'error',
+            'error': 'Probe was requested but task_context.inputs.code_repo_path is missing',
+            'validation': validation,
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    extra_args = ['--latest_result', str(latest_result_file)]
+    if latest_repair_plan is not None and latest_repair_plan.exists():
+        extra_args.extend(['--latest_repair_plan', str(latest_repair_plan)])
+    if resolved_analysis_plan is not None and resolved_analysis_plan.exists():
+        extra_args.extend(['--analysis_plan', str(resolved_analysis_plan)])
+    if trajectory_path is not None and trajectory_path.exists():
+        extra_args.extend(['--trajectory', str(trajectory_path)])
+
+    execution = execute_evidence_probe(
+        script_path=probe_script_path,
+        code_repo_path=code_repo_path,
+        task_context_path=task_context_file,
+        output_path=probe_result_path,
+        timeout_sec=min(timeout_sec, 120),
+        extra_args=extra_args,
+    )
+    if execution.get('status') != 'success':
+        return {
+            'status': 'error',
+            'error': execution.get('error'),
+            'validation': validation,
+            'execution': execution,
+            'followup_evidence_probe_request_path': str(probe_request_path),
+            'followup_evidence_probe_result_path': str(probe_result_path),
+            'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+        }
+
+    return {
+        'status': 'success',
+        'validation': validation,
+        'request': normalized_request,
+        'execution': execution,
+        'followup_evidence_probe_request_path': str(probe_request_path),
+        'followup_evidence_probe_result_path': str(probe_result_path),
+        'agent_response_path': str(log_path),
+        'agent_id': response.get('agent_id'),
+        'session_scope': response.get('session_scope'),
+        'service_url': response.get('service_url'),
+        'service_url_source': response.get('service_url_source'),
+    }
 
 
 def generate_analysis_plan(
@@ -373,8 +1215,66 @@ def generate_analysis_plan(
     paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
     analysis_plan_path = Path(str(paths.get('analysis_plan_path') or task_context_file.parent / 'analysis_plan.json')).expanduser().resolve()
     experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
+    write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=str(task_context.get('paper_slug', 'paper')),
+        task_context=task_context,
+        mode='agent_loop',
+        max_attempts=max_attempts,
+        service_url=service_url,
+        analysis_plan_path=str(analysis_plan_path),
+    )
     working_dir = _resolve_working_dir(task_context)
     notebook_path = experiment_dir / 'analysis_plan_agent.ipynb'
+    evidence_probe = _run_analysis_evidence_probe(
+        task_context=task_context,
+        task_context_file=task_context_file,
+        experiment_dir=experiment_dir,
+        working_dir=working_dir,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+    if evidence_probe.get('status') == 'error':
+        result = {
+            'status': 'error',
+            'error': evidence_probe.get('error') or 'analysis evidence probe failed',
+            'analysis_plan_path': str(analysis_plan_path),
+            'analysis_evidence_probe_status': evidence_probe.get('status'),
+            'analysis_evidence_probe_request_path': evidence_probe.get('analysis_evidence_probe_request_path'),
+            'analysis_evidence_probe_result_path': evidence_probe.get('analysis_evidence_probe_result_path'),
+            'agent_response_path': evidence_probe.get('agent_response_path'),
+            'agent_id': evidence_probe.get('agent_id'),
+            'session_scope': evidence_probe.get('session_scope'),
+            'service_url': evidence_probe.get('service_url'),
+            'service_url_source': evidence_probe.get('service_url_source'),
+            'evidence_probe': evidence_probe,
+        }
+        result.update(
+            write_run_manifest(
+                experiment_dir=experiment_dir,
+                paper_slug=str(task_context.get('paper_slug', 'paper')),
+                task_context=task_context,
+                mode='agent_loop',
+                service_url=service_url,
+                analysis_plan_path=str(analysis_plan_path),
+                plan_generation=result,
+            )
+        )
+        return result
+
+    analysis_files = [str(task_context_file)]
+    evidence_graph_path = paths.get('evidence_graph_path')
+    if isinstance(evidence_graph_path, str) and evidence_graph_path.strip():
+        evidence_graph_file = Path(evidence_graph_path).expanduser().resolve()
+        if evidence_graph_file.exists():
+            analysis_files.append(str(evidence_graph_file))
+    probe_result_path: Optional[Path] = None
+    if isinstance(evidence_probe.get('analysis_evidence_probe_result_path'), str):
+        candidate_probe_result = Path(evidence_probe['analysis_evidence_probe_result_path']).expanduser().resolve()
+        if candidate_probe_result.exists():
+            probe_result_path = candidate_probe_result
+            analysis_files.append(str(candidate_probe_result))
 
     response = run_agent_chat(
         message=_build_analysis_plan_prompt(
@@ -382,12 +1282,13 @@ def generate_analysis_plan(
             task_context_path=task_context_file,
             analysis_plan_path=analysis_plan_path,
             max_attempts=max_attempts,
+            evidence_probe_result_path=probe_result_path,
         ),
         mode='edit',
         working_dir=str(working_dir),
         outputs_path=str(experiment_dir),
         notebook_path=str(notebook_path),
-        files=[str(task_context_file)],
+        files=analysis_files,
         service_url=service_url,
         api_key=api_key,
         timeout_sec=timeout_sec,
@@ -395,34 +1296,113 @@ def generate_analysis_plan(
 
     log_path = experiment_dir / 'analysis_plan_agent_response.json'
     _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=task_context,
+        stage='analysis_plan_generation',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'analysis_plan_path': str(analysis_plan_path),
+        },
+    )
 
     if response.get('status') == 'error':
-        return {
+        result = {
             'status': 'error',
             'error': response.get('error'),
             'analysis_plan_path': str(analysis_plan_path),
+            'analysis_evidence_probe_status': evidence_probe.get('status'),
+            'analysis_evidence_probe_request_path': evidence_probe.get('analysis_evidence_probe_request_path'),
+            'analysis_evidence_probe_result_path': evidence_probe.get('analysis_evidence_probe_result_path'),
             'agent_response_path': str(log_path),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+            'evidence_probe': evidence_probe,
         }
+        result.update(
+            write_run_manifest(
+                experiment_dir=experiment_dir,
+                paper_slug=str(task_context.get('paper_slug', 'paper')),
+                task_context=task_context,
+                mode='agent_loop',
+                service_url=service_url,
+                analysis_plan_path=str(analysis_plan_path),
+                plan_generation=result,
+            )
+        )
+        return result
 
     if not analysis_plan_path.exists():
-        return {
+        result = {
             'status': 'error',
             'error': f'Agent finished but did not write analysis_plan.json to {analysis_plan_path}',
             'analysis_plan_path': str(analysis_plan_path),
+            'analysis_evidence_probe_status': evidence_probe.get('status'),
+            'analysis_evidence_probe_request_path': evidence_probe.get('analysis_evidence_probe_request_path'),
+            'analysis_evidence_probe_result_path': evidence_probe.get('analysis_evidence_probe_result_path'),
             'agent_response_path': str(log_path),
             'agent_text': response.get('text', ''),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+            'service_url': response.get('service_url'),
+            'service_url_source': response.get('service_url_source'),
+            'evidence_probe': evidence_probe,
         }
+        result.update(
+            write_run_manifest(
+                experiment_dir=experiment_dir,
+                paper_slug=str(task_context.get('paper_slug', 'paper')),
+                task_context=task_context,
+                mode='agent_loop',
+                service_url=service_url,
+                analysis_plan_path=str(analysis_plan_path),
+                plan_generation=result,
+            )
+        )
+        return result
 
     plan = _load_json(analysis_plan_path)
-    validation = validate_analysis_plan(plan)
+    validation = validate_analysis_plan(plan, task_context=task_context)
     result = {
         'status': 'success' if validation['status'] != 'error' else 'error',
         'analysis_plan_path': str(analysis_plan_path),
+        'analysis_evidence_probe_status': evidence_probe.get('status'),
+        'analysis_evidence_probe_request_path': evidence_probe.get('analysis_evidence_probe_request_path'),
+        'analysis_evidence_probe_result_path': evidence_probe.get('analysis_evidence_probe_result_path'),
         'agent_response_path': str(log_path),
         'agent_id': response.get('agent_id'),
         'validation': validation,
         'agent_text': response.get('text', ''),
+        'session_scope': response.get('session_scope'),
+        'service_url': response.get('service_url'),
+        'service_url_source': response.get('service_url_source'),
+        'evidence_probe': evidence_probe,
     }
+    normalized_plan = validation.get('normalized_plan')
+    if isinstance(normalized_plan, dict):
+        result.update(
+            write_routing_audit(
+                experiment_dir=experiment_dir,
+                paper_slug=str(task_context.get('paper_slug', 'paper')),
+                task_context=task_context,
+                analysis_plan=normalized_plan,
+                analysis_plan_path=str(analysis_plan_path),
+            )
+        )
+    result.update(
+        write_run_manifest(
+            experiment_dir=experiment_dir,
+            paper_slug=str(task_context.get('paper_slug', 'paper')),
+            task_context=task_context,
+            mode='agent_loop',
+            service_url=service_url,
+            analysis_plan_path=str(analysis_plan_path),
+            plan_generation=result,
+        )
+    )
     _write_json(log_path, {**response, 'validation': validation})
     return result
 
@@ -448,6 +1428,14 @@ def generate_followup_attempt(
     attempt_result = _load_json(latest_result_file)
     paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
     experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
+    write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=str(task_context.get('paper_slug', 'paper')),
+        task_context=task_context,
+        mode='agent_loop',
+        analysis_plan_path=analysis_plan_path,
+        service_url=service_url,
+    )
     working_dir = _resolve_working_dir(task_context)
     notebook_path = output_path.parent / 'followup_attempt_agent.ipynb'
     resolved_analysis_plan = (
@@ -479,6 +1467,40 @@ def generate_followup_attempt(
     if latest_repair_plan is not None and latest_repair_plan.exists():
         files.append(str(latest_repair_plan))
 
+    evidence_probe = _run_followup_evidence_probe(
+        task_context=task_context,
+        task_context_file=task_context_file,
+        latest_result_file=latest_result_file,
+        latest_repair_plan=latest_repair_plan,
+        resolved_analysis_plan=resolved_analysis_plan,
+        trajectory_path=trajectory_path,
+        output_path=output_path,
+        resolved_next_attempt_id=resolved_next_attempt_id,
+        working_dir=working_dir,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+    if evidence_probe.get('status') == 'error':
+        return {
+            'status': 'error',
+            'error': evidence_probe.get('error') or 'follow-up evidence probe failed',
+            'attempt_path': str(output_path),
+            'agent_response_path': evidence_probe.get('agent_response_path'),
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+            'agent_id': evidence_probe.get('agent_id'),
+            'session_scope': evidence_probe.get('session_scope'),
+        }
+
+    probe_result_path: Optional[Path] = None
+    if isinstance(evidence_probe.get('followup_evidence_probe_result_path'), str):
+        candidate_probe_result = Path(evidence_probe['followup_evidence_probe_result_path']).expanduser().resolve()
+        if candidate_probe_result.exists():
+            probe_result_path = candidate_probe_result
+            files.append(str(candidate_probe_result))
+
     response = run_agent_chat(
         message=_build_followup_attempt_prompt(
             task_context_path=task_context_file,
@@ -486,6 +1508,7 @@ def generate_followup_attempt(
             latest_attempt_result_path=latest_result_file,
             latest_repair_plan_path=latest_repair_plan,
             trajectory_path=trajectory_path if trajectory_path and trajectory_path.exists() else None,
+            evidence_probe_result_path=probe_result_path,
             output_attempt_path=output_path,
             max_attempts=max_attempts,
             next_attempt_id=resolved_next_attempt_id,
@@ -502,6 +1525,20 @@ def generate_followup_attempt(
 
     log_path = output_path.parent / f'followup_attempt_{resolved_next_attempt_id}_agent_response.json'
     _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=task_context,
+        stage='followup_attempt_generation',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'attempt_path': str(output_path),
+            'next_attempt_id': resolved_next_attempt_id,
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+        },
+    )
 
     if response.get('status') == 'error':
         return {
@@ -509,6 +1546,11 @@ def generate_followup_attempt(
             'error': response.get('error'),
             'attempt_path': str(output_path),
             'agent_response_path': str(log_path),
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
         }
 
     if not output_path.exists():
@@ -518,6 +1560,11 @@ def generate_followup_attempt(
             'attempt_path': str(output_path),
             'agent_response_path': str(log_path),
             'agent_text': response.get('text', ''),
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
         }
 
     attempt_payload = _load_json(output_path)
@@ -531,9 +1578,35 @@ def generate_followup_attempt(
             'agent_response_path': str(log_path),
             'agent_text': response.get('text', ''),
             'validation': validation,
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
         }
 
     normalized_attempt = validation['normalized_attempt']
+    if probe_result_path is not None and not _evidence_refs_contain_prefix(
+        normalized_attempt.get('evidence_refs'),
+        'followup_evidence_probe_result',
+    ):
+        return {
+            'status': 'error',
+            'error': (
+                'follow-up attempt must reference followup_evidence_probe_result in evidence_refs '
+                'when a follow-up evidence probe was requested and executed'
+            ),
+            'attempt_path': str(output_path),
+            'agent_response_path': str(log_path),
+            'agent_text': response.get('text', ''),
+            'validation': validation,
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
+        }
+
     strategy_delta = normalized_attempt.get('strategy_delta')
     if not isinstance(strategy_delta, dict):
         return {
@@ -543,6 +1616,11 @@ def generate_followup_attempt(
             'agent_response_path': str(log_path),
             'agent_text': response.get('text', ''),
             'validation': validation,
+            'followup_evidence_probe_status': evidence_probe.get('status'),
+            'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+            'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
+            'agent_id': response.get('agent_id'),
+            'session_scope': response.get('session_scope'),
         }
 
     return {
@@ -550,7 +1628,11 @@ def generate_followup_attempt(
         'attempt_path': str(output_path),
         'attempt_spec': normalized_attempt,
         'agent_response_path': str(log_path),
+        'followup_evidence_probe_status': evidence_probe.get('status'),
+        'followup_evidence_probe_request_path': evidence_probe.get('followup_evidence_probe_request_path'),
+        'followup_evidence_probe_result_path': evidence_probe.get('followup_evidence_probe_result_path'),
         'agent_id': response.get('agent_id'),
+        'session_scope': response.get('session_scope'),
         'agent_text': response.get('text', ''),
         'validation': validation,
         'latest_repair_plan_path': str(latest_repair_plan) if latest_repair_plan else None,
@@ -623,10 +1705,22 @@ def _prepare_candidate_edit_context(
     resolved_repair_plan_path = (
         Path(repair_plan_path).expanduser().resolve() if repair_plan_path else None
     )
+    resolved_failure_feedback_path = (
+        output_path.parent / 'failure_feedback.json'
+        if failure_feedback is not None
+        else None
+    )
 
     task_context = _load_json(task_context_file)
     paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
     experiment_dir = Path(str(paths.get('experiment_dir') or task_context_file.parent)).expanduser().resolve()
+    write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=str(task_context.get('paper_slug', 'paper')),
+        task_context=task_context,
+        mode='agent_loop',
+        analysis_plan_path=analysis_plan_path,
+    )
     working_dir = _resolve_working_dir(task_context)
     notebook_path = output_path.parent / notebook_name
     additional_editable_targets: list[Dict[str, Any]] = []
@@ -640,10 +1734,27 @@ def _prepare_candidate_edit_context(
                 'description': 'Structured per-round repair hypothesis and execution plan.',
             }
         )
+    if resolved_failure_feedback_path is not None:
+        _write_json(resolved_failure_feedback_path, failure_feedback)
+    resolved_analysis_plan = (
+        Path(analysis_plan_path).expanduser().resolve()
+        if analysis_plan_path
+        else (
+            Path(str(paths.get('analysis_plan_path'))).expanduser().resolve()
+            if paths.get('analysis_plan_path')
+            else None
+        )
+    )
+    analysis_plan = (
+        _load_json(resolved_analysis_plan)
+        if resolved_analysis_plan is not None and resolved_analysis_plan.exists()
+        else None
+    )
     edit_workspace = _prepare_attempt_edit_workspace(
         task_context=task_context,
         attempt_spec=attempt_spec,
         output_code_path=output_path,
+        analysis_plan=analysis_plan,
         additional_editable_targets=additional_editable_targets,
     )
     before_snapshot = _snapshot_editable_targets(edit_workspace['editable_targets'])
@@ -654,6 +1765,7 @@ def _prepare_candidate_edit_context(
     return {
         'task_context_file': task_context_file,
         'task_context': task_context,
+        'attempt_spec': attempt_spec,
         'paths': paths,
         'output_path': output_path,
         'experiment_dir': experiment_dir,
@@ -663,7 +1775,9 @@ def _prepare_candidate_edit_context(
         'before_snapshot': before_snapshot,
         'resolved_loss_formula': support_paths['loss_formula_path'],
         'resolved_analysis_plan': support_paths['analysis_plan_path'],
+        'analysis_plan': analysis_plan,
         'repair_plan_path': resolved_repair_plan_path,
+        'failure_feedback_path': resolved_failure_feedback_path,
     }
 
 
@@ -850,6 +1964,18 @@ def generate_candidate_loss(
 
     log_path = context['output_path'].parent / 'agent_code_generation_response.json'
     _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=context['task_context'],
+        stage='candidate_loss_generation',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'attempt_name': attempt_spec.get('name'),
+            'attempt_kind': attempt_spec.get('kind'),
+            'code_path': str(context['output_path']),
+        },
+    )
     return _finalize_candidate_edit_result(
         output_path=context['output_path'],
         response=response,
@@ -887,6 +2013,46 @@ def repair_candidate_loss(
         repair_plan_path=resolved_repair_plan_path,
     )
 
+    evidence_probe = _run_candidate_loss_repair_evidence_probe(
+        context=context,
+        failure_feedback=failure_feedback,
+        service_url=service_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+    if evidence_probe.get('status') == 'error':
+        return {
+            'status': 'error',
+            'error': evidence_probe.get('error') or 'candidate loss repair evidence probe failed',
+            'code_path': str(context['output_path']),
+            'repair_plan_path': str(context['repair_plan_path']) if context.get('repair_plan_path') else None,
+            'repair_evidence_probe_status': evidence_probe.get('status'),
+            'repair_evidence_probe_request_path': evidence_probe.get('repair_evidence_probe_request_path'),
+            'repair_evidence_probe_result_path': evidence_probe.get('repair_evidence_probe_result_path'),
+            'agent_response_path': evidence_probe.get('agent_response_path'),
+            'agent_id': evidence_probe.get('agent_id'),
+            'session_scope': evidence_probe.get('session_scope'),
+        }
+
+    repair_probe_result_path: Optional[Path] = None
+    if isinstance(evidence_probe.get('repair_evidence_probe_result_path'), str):
+        candidate_probe_result = Path(evidence_probe['repair_evidence_probe_result_path']).expanduser().resolve()
+        if candidate_probe_result.exists():
+            repair_probe_result_path = candidate_probe_result
+
+    repair_input_files = _build_agent_edit_input_files(
+        task_context_file=context['task_context_file'],
+        editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
+        editable_targets=context['edit_workspace']['editable_targets'],
+        resolved_loss_formula=context['resolved_loss_formula'],
+        resolved_analysis_plan=context['resolved_analysis_plan'],
+        current_code_path=context['output_path'],
+    )
+    if isinstance(context.get('failure_feedback_path'), Path) and context['failure_feedback_path'].exists():
+        repair_input_files.append(str(context['failure_feedback_path']))
+    if repair_probe_result_path is not None and repair_probe_result_path.exists():
+        repair_input_files.append(str(repair_probe_result_path))
+
     response = run_agent_chat(
         message=_build_candidate_loss_repair_prompt(
             task_context_path=context['task_context_file'],
@@ -897,6 +2063,8 @@ def repair_candidate_loss(
             current_code_path=context['output_path'],
             output_code_path=context['output_path'],
             repair_plan_path=context['repair_plan_path'] or (context['output_path'].parent / 'repair_plan.json'),
+            failure_feedback_path=context.get('failure_feedback_path'),
+            evidence_probe_result_path=repair_probe_result_path,
             attempt_spec=attempt_spec,
             failure_feedback=failure_feedback,
         ),
@@ -904,14 +2072,7 @@ def repair_candidate_loss(
         working_dir=str(context['working_dir']),
         outputs_path=str(context['experiment_dir']),
         notebook_path=str(context['notebook_path']),
-        files=_build_agent_edit_input_files(
-            task_context_file=context['task_context_file'],
-            editable_manifest_path=Path(context['edit_workspace']['manifest_path']),
-            editable_targets=context['edit_workspace']['editable_targets'],
-            resolved_loss_formula=context['resolved_loss_formula'],
-            resolved_analysis_plan=context['resolved_analysis_plan'],
-            current_code_path=context['output_path'],
-        ),
+        files=repair_input_files,
         service_url=service_url,
         api_key=api_key,
         timeout_sec=timeout_sec,
@@ -919,6 +2080,22 @@ def repair_candidate_loss(
 
     log_path = context['output_path'].parent / 'agent_code_repair_response.json'
     _write_json(log_path, response if isinstance(response, dict) else {'status': 'error'})
+    _append_agent_call_manifest(
+        task_context=context['task_context'],
+        stage='candidate_loss_repair',
+        response=response,
+        agent_response_path=log_path,
+        mode='edit',
+        extra={
+            'attempt_name': attempt_spec.get('name'),
+            'attempt_kind': attempt_spec.get('kind'),
+            'code_path': str(context['output_path']),
+            'repair_plan_path': str(context['repair_plan_path']) if context.get('repair_plan_path') else None,
+            'repair_evidence_probe_status': evidence_probe.get('status'),
+            'repair_evidence_probe_request_path': evidence_probe.get('repair_evidence_probe_request_path'),
+            'repair_evidence_probe_result_path': evidence_probe.get('repair_evidence_probe_result_path'),
+        },
+    )
     result = _finalize_candidate_edit_result(
         output_path=context['output_path'],
         response=response,
@@ -930,8 +2107,33 @@ def repair_candidate_loss(
         failure_feedback=failure_feedback,
         include_history=True,
     )
-    return _finalize_repair_plan_result(
+    finalized_result = _finalize_repair_plan_result(
         result=result,
         log_path=log_path,
         repair_plan_path=context['repair_plan_path'],
     )
+    finalized_result.update(
+        {
+            'repair_evidence_probe_status': evidence_probe.get('status'),
+            'repair_evidence_probe_request_path': evidence_probe.get('repair_evidence_probe_request_path'),
+            'repair_evidence_probe_result_path': evidence_probe.get('repair_evidence_probe_result_path'),
+        }
+    )
+    if (
+        finalized_result.get('status') == 'success'
+        and repair_probe_result_path is not None
+        and isinstance(finalized_result.get('repair_plan'), dict)
+        and not _evidence_refs_contain_prefix(
+            finalized_result['repair_plan'].get('evidence_refs'),
+            'repair_evidence_probe_result',
+        )
+    ):
+        return {
+            **finalized_result,
+            'status': 'error',
+            'error': (
+                'repair_plan.json must reference repair_evidence_probe_result in evidence_refs '
+                'when a repair evidence probe was requested and executed'
+            ),
+        }
+    return finalized_result

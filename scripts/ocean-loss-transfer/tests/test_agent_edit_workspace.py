@@ -38,6 +38,54 @@ class AgentEditWorkspaceTests(unittest.TestCase):
             },
         )
 
+    def test_prepare_attempt_edit_workspace_prefers_analysis_plan_routing_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_code_path = root / 'attempt_plan_override' / 'candidate_loss.py'
+            fake_adapter = root / 'sources' / 'sandbox_model_adapter.py'
+            fake_trainer = root / 'sources' / 'sandbox_trainer.py'
+            fake_models = root / 'sources' / 'models'
+            fake_models.mkdir(parents=True)
+            (fake_models / '__init__.py').write_text('# fake models\n', encoding='utf-8')
+            fake_adapter.parent.mkdir(parents=True, exist_ok=True)
+            fake_adapter.write_text('# fake adapter\n', encoding='utf-8')
+            fake_trainer.write_text('# fake trainer\n', encoding='utf-8')
+
+            workspace = prepare_attempt_edit_workspace(
+                task_context={
+                    'paper_slug': 'demo-paper',
+                    'paths': {
+                        'routing_audit_path': str(root / 'routing_audit.json'),
+                        'analysis_plan_path': str(root / 'analysis_plan.json'),
+                    },
+                    'integration_assessment': {
+                        'recommended_path': 'loss_only',
+                        'requires_model_changes': True,
+                    }
+                },
+                analysis_plan={
+                    'integration_decision': {
+                        'path': 'extend_model_outputs',
+                        'path_raw': 'model_output_extension',
+                        'path_status': 'alias_mapped',
+                        'evidence_refs': ['paper.loss', 'code.forward'],
+                    }
+                },
+                attempt_spec={'files_to_edit': ['candidate_loss.py']},
+                output_code_path=output_code_path,
+                override_file_sources={
+                    'sandbox_model_adapter.py': fake_adapter,
+                    'sandbox_trainer.py': fake_trainer,
+                },
+                override_tree_sources={'models': fake_models},
+            )
+
+            manifest = json.loads(Path(workspace['manifest_path']).read_text(encoding='utf-8'))
+            self.assertEqual(manifest['routing_policy']['recommended_path'], 'extend_model_outputs')
+            self.assertEqual(manifest['routing_policy']['recommended_path_source'], 'analysis_plan')
+            self.assertEqual(manifest['routing_policy']['recommended_path_status'], 'alias_mapped')
+            self.assertEqual(manifest['routing_policy']['routing_audit_path'], str(root / 'routing_audit.json'))
+
     def test_prepare_attempt_edit_workspace_writes_manifest_and_copies_attempt_scoped_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

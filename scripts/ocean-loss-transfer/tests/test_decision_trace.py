@@ -89,6 +89,55 @@ class DecisionTraceTests(unittest.TestCase):
         self.assertEqual(record['action']['strategy_delta']['expected_signal'], 'validation SSIM should improve')
         self.assertEqual(record['reward']['stage_score'], 6)
 
+    def test_build_decision_trace_record_prefers_effective_routing_audit(self) -> None:
+        task_context = {
+            'paths': {
+                'task_context_path': '/tmp/task_context.json',
+                'routing_audit_path': '/tmp/routing_audit.json',
+            },
+            'integration_assessment': {
+                'recommended_path': 'loss_only',
+                'recommended_path_raw': 'reuse_existing_loss_config',
+                'recommended_path_status': 'alias_mapped',
+                'requires_model_changes': True,
+            },
+        }
+        attempt = {
+            'attempt_id': 1,
+            'name': 'Attempt 1',
+            'kind': 'agent_code',
+            'reward_summary': {'primary_metric_name': 'val_ssim', 'primary_metric': 0.67, 'stage_score': 6},
+            'status': 'passed',
+            'passed': True,
+            'metrics': {'val_ssim': 0.67},
+            'paths': {'attempt_dir': '/tmp/attempt_1'},
+        }
+
+        record = build_decision_trace_record(
+            paper_slug='demo-paper',
+            task_context=task_context,
+            attempt=attempt,
+            analysis_plan_path='/tmp/analysis_plan.json',
+            trajectory_path='/tmp/trajectory.jsonl',
+            routing_audit={
+                'paths': {'routing_audit_path': '/tmp/routing_audit.json'},
+                'routes': {
+                    'effective': {
+                        'raw_path': 'model_output_extension',
+                        'canonical_path': 'extend_model_outputs',
+                        'status': 'alias_mapped',
+                        'selected_from': 'analysis_plan',
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(record['state']['integration_path'], 'extend_model_outputs')
+        self.assertEqual(record['state']['integration_path_raw'], 'model_output_extension')
+        self.assertEqual(record['state']['integration_path_status'], 'alias_mapped')
+        self.assertEqual(record['state']['integration_path_source'], 'analysis_plan')
+        self.assertEqual(record['provenance']['routing_audit_path'], '/tmp/routing_audit.json')
+
     def test_write_decision_trace_writes_jsonl_records(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             experiment_dir = Path(temp_dir)

@@ -31,10 +31,13 @@ def build_decision_trace_record(
     attempt: Dict[str, Any],
     analysis_plan_path: Optional[str],
     trajectory_path: Optional[str],
+    routing_audit: Optional[Dict[str, Any]] = None,
     previous_attempt: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     paths = _safe_dict(task_context.get('paths'))
     integration = _safe_dict(task_context.get('integration_assessment'))
+    audit_paths = _safe_dict(_safe_dict(routing_audit).get('paths'))
+    effective_route = _safe_dict(_safe_dict(_safe_dict(routing_audit).get('routes')).get('effective'))
     formula_interface = _safe_dict(task_context.get('formula_interface'))
     reward_summary = _safe_dict(attempt.get('reward_summary'))
     metrics = _safe_dict(attempt.get('metrics'))
@@ -48,7 +51,10 @@ def build_decision_trace_record(
         'paper_slug': paper_slug,
         'attempt_id': attempt.get('attempt_id'),
         'state': {
-            'integration_path': integration.get('recommended_path'),
+            'integration_path': effective_route.get('canonical_path') or integration.get('recommended_path'),
+            'integration_path_raw': effective_route.get('raw_path') or integration.get('recommended_path_raw'),
+            'integration_path_status': effective_route.get('status') or integration.get('recommended_path_status'),
+            'integration_path_source': effective_route.get('selected_from'),
             'requires_model_changes': integration.get('requires_model_changes'),
             'loss_only_pipeline_viable': integration.get('loss_only_pipeline_viable'),
             'formula_requires_model_changes': formula_interface.get('requires_model_changes'),
@@ -83,6 +89,7 @@ def build_decision_trace_record(
             'task_context_path': paths.get('task_context_path'),
             'analysis_plan_path': analysis_plan_path,
             'trajectory_path': trajectory_path,
+            'routing_audit_path': audit_paths.get('routing_audit_path') or paths.get('routing_audit_path'),
             'attempt_dir': attempt_paths.get('attempt_dir'),
             'result_path': attempt_paths.get('result_path'),
             'code_path': attempt_paths.get('code_path'),
@@ -215,6 +222,7 @@ def write_decision_trace(
     analysis_plan_path: Optional[str],
     trajectory_path: Optional[str],
     attempts: List[Dict[str, Any]],
+    routing_audit: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     decision_trace_path = experiment_dir / 'decision_trace.jsonl'
     rl_dataset_path = experiment_dir / 'rl_decision_dataset.jsonl'
@@ -240,6 +248,7 @@ def write_decision_trace(
                 attempt=attempt,
                 analysis_plan_path=analysis_plan_path,
                 trajectory_path=trajectory_path,
+                routing_audit=routing_audit,
                 previous_attempt=previous_attempt,
             )
         )
