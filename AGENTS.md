@@ -44,3 +44,33 @@ python scripts/ocean-loss-transfer/run_auto_experiment.py --paper_slug <slug> --
 
 - Commit messages follow Conventional Commits (`feat: ...`, `fix: ...`, `docs: ...`), often with Chinese detail after the prefix.
 - PRs should include: what changed, why, how you validated (commands + key logs/metrics), and any new artifacts under `sandbox/loss_transfer_experiments/<slug>/`.
+
+### Get-Content Usage in PowerShell
+
+When utilizing the `Get-Content` cmdlet on Windows PowerShell, explicitly specify the encoding as **UTF8** to guarantee correct text decoding and avoid garbled characters. Always follow standard PowerShell syntax with formal parameter naming and valid Windows file paths.
+
+Standard compliant example:
+```powershell
+Get-Content -Path "C:\target\file.txt" -Encoding UTF8
+```
+For higher robustness with special characters or literal file paths, use:
+```powershell
+Get-Content -LiteralPath "C:\target\file.txt" -Encoding UTF8 -Raw
+```
+
+## Author Documentation before Modifications or Generations
+When generating or modifying code files, always add/update a standardized header comment at the top following this format:
+```typescript
+/**
+ * @file filename.ext
+ *
+ * @description [Brief description]
+ * @author kongzhiquan
+ * @date YYYY-MM-DD
+ * @version x.x.x
+ *
+ * @changelog
+ *   - YYYY-MM-DD kongzhiquan: version description
+ */
+```
+If the file already has a header, update the "Changelog" section and append `kongzhiquan` to the "@contributors" list if not already present. If '@contributors' is not present, add it below the author line.

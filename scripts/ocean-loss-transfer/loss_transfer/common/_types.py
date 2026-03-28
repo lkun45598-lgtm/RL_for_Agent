@@ -4,13 +4,14 @@
 @author kongzhiquan
 @contributors Leizheng
 @date 2026-03-23
-@version 1.1.0
+@version 1.2.0
 
 @changelog
   - 2026-03-23 kongzhiquan: v1.0.0 initial version
   - 2026-03-24 Leizheng: v1.1.0 add enhanced validation types (FailureCategory,
     TrainingCurve, GradientAnalysis, SmokeTestDetail, FixAttempt, EarlyStopInfo);
     extend ValidationResult, TrialResult, ExperimentSummary with new optional fields
+  - 2026-03-28 kongzhiquan: v1.2.0 remove legacy innovations.yaml/index.json typed wrappers
 """
 
 from typing import Dict, List, Optional, Union, Literal, TypedDict
@@ -449,17 +450,6 @@ class LLMInnovationExtract(TypedDict, total=False):
     key_idea: str
     why_works: str
     tags: List[str]
-
-
-class KnowledgeIndex(TypedDict):
-    """knowledge_base/index.json 的结构"""
-    next_id: int
-    tags_index: Dict[str, List[str]]
-
-
-class KnowledgeData(TypedDict):
-    """knowledge_base/innovations.yaml 的结构"""
-    innovations: List[Innovation]
 
 
 # ============================================================

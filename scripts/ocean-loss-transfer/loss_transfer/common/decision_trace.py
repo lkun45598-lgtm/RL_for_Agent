@@ -2,7 +2,14 @@
 @file decision_trace.py
 @description Build RL-friendly decision-trace samples from executed loss-transfer attempts.
 @author OpenAI Codex
+@contributors kongzhiquan
 @date 2026-03-26
+@version 1.2.0
+
+@changelog
+  - 2026-03-26 OpenAI Codex: v1.0.0 initial version
+  - 2026-03-28 kongzhiquan: v1.1.0 reuse shared case-memory store for persistence
+  - 2026-03-28 kongzhiquan: v1.2.0 merge routing-audit provenance with shared case-memory export
 """
 
 from __future__ import annotations
@@ -10,6 +17,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from loss_transfer.memory.case_memory_store import (
+    DEFAULT_CASE_MEMORY_PATH,
+    merge_case_memory_records,
+)
+
+
+_DEFAULT_CASE_MEMORY_PATH = DEFAULT_CASE_MEMORY_PATH
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -22,6 +37,54 @@ def _safe_list(value: Any) -> List[Any]:
 
 def _as_bool(value: Any) -> Optional[bool]:
     return value if isinstance(value, bool) else None
+
+
+def _latest_repair_round(attempt: Dict[str, Any]) -> Dict[str, Any]:
+    for round_info in reversed(_safe_list(attempt.get('repair_rounds'))):
+        if isinstance(round_info, dict):
+            return round_info
+    return {}
+
+
+def build_case_memory_record(
+    *,
+    trace_record: Dict[str, Any],
+    attempt: Dict[str, Any],
+) -> Dict[str, Any]:
+    state = _safe_dict(trace_record.get('state'))
+    action = _safe_dict(trace_record.get('action'))
+    reward = _safe_dict(trace_record.get('reward'))
+    outcome = _safe_dict(trace_record.get('outcome'))
+    provenance = _safe_dict(trace_record.get('provenance'))
+    latest_repair_round = _latest_repair_round(attempt)
+    repair_payload = _safe_dict(latest_repair_round.get('repair'))
+    repair_plan_summary = _safe_dict(repair_payload.get('repair_plan_summary'))
+
+    return {
+        'schema_version': 'case_memory.v1',
+        'paper_slug': trace_record.get('paper_slug'),
+        'attempt_id': trace_record.get('attempt_id'),
+        'integration_path': state.get('integration_path'),
+        'kind': action.get('kind'),
+        'name': action.get('name'),
+        'objective': action.get('objective'),
+        'strategy_delta': _safe_dict(action.get('strategy_delta')),
+        'stop_layer': outcome.get('stop_layer'),
+        'error': outcome.get('error'),
+        'passed': outcome.get('passed'),
+        'primary_metric_name': reward.get('primary_metric_name'),
+        'primary_metric': reward.get('primary_metric'),
+        'stage_score': reward.get('stage_score'),
+        'repair_rounds_used': reward.get('repair_rounds_used'),
+        'repair_hypothesis': repair_plan_summary.get('failure_hypothesis'),
+        'post_stop_layer': latest_repair_round.get('post_stop_layer'),
+        'post_error': latest_repair_round.get('post_error'),
+        'provenance': {
+            'result_path': provenance.get('result_path'),
+            'analysis_plan_path': provenance.get('analysis_plan_path'),
+            'trajectory_path': provenance.get('trajectory_path'),
+        },
+    }
 
 
 def build_decision_trace_record(
@@ -223,6 +286,7 @@ def write_decision_trace(
     trajectory_path: Optional[str],
     attempts: List[Dict[str, Any]],
     routing_audit: Optional[Dict[str, Any]] = None,
+    case_memory_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     decision_trace_path = experiment_dir / 'decision_trace.jsonl'
     rl_dataset_path = experiment_dir / 'rl_decision_dataset.jsonl'
@@ -233,6 +297,7 @@ def write_decision_trace(
     }
 
     records: List[Dict[str, Any]] = []
+    case_memory_records: List[Dict[str, Any]] = []
     for attempt in attempts:
         if not isinstance(attempt, dict):
             continue
@@ -241,15 +306,19 @@ def write_decision_trace(
         previous_attempt_id = strategy_delta.get('previous_attempt_id')
         if isinstance(previous_attempt_id, int):
             previous_attempt = attempts_by_id.get(previous_attempt_id)
-        records.append(
-            build_decision_trace_record(
-                paper_slug=paper_slug,
-                task_context=task_context,
+        trace_record = build_decision_trace_record(
+            paper_slug=paper_slug,
+            task_context=task_context,
+            attempt=attempt,
+            analysis_plan_path=analysis_plan_path,
+            trajectory_path=trajectory_path,
+            previous_attempt=previous_attempt,
+        )
+        records.append(trace_record)
+        case_memory_records.append(
+            build_case_memory_record(
+                trace_record=trace_record,
                 attempt=attempt,
-                analysis_plan_path=analysis_plan_path,
-                trajectory_path=trajectory_path,
-                routing_audit=routing_audit,
-                previous_attempt=previous_attempt,
             )
         )
 
@@ -264,9 +333,21 @@ def write_decision_trace(
         for record in rl_records:
             handle.write(json.dumps(record, ensure_ascii=False) + '\n')
 
+    resolved_case_memory_path = (
+        case_memory_path.expanduser().resolve()
+        if case_memory_path is not None
+        else _DEFAULT_CASE_MEMORY_PATH
+    )
+    case_memory_count = merge_case_memory_records(
+        case_memory_path=resolved_case_memory_path,
+        records=case_memory_records,
+    )
+
     return {
         'decision_trace_path': str(decision_trace_path),
         'decision_trace_count': len(records),
         'rl_dataset_path': str(rl_dataset_path),
         'rl_dataset_count': len(rl_records),
+        'case_memory_path': str(resolved_case_memory_path),
+        'case_memory_count': case_memory_count,
     }

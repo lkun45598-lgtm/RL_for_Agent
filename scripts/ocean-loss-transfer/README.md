@@ -254,7 +254,7 @@ build_task_context(
 - `loss_ir_role`: `optional_reference` 或 `not_required_for_agent_analysis`
 - `legacy_loss_ir_status.auto_extraction_enabled = False`
 
-也就是说，旧的 `extract_loss_ir -> check_compatibility -> generate_patch` 主链现在已经不是默认 agentic path。
+也就是说，旧的 `extract_loss_ir -> check_compatibility` 主链现在已经不是默认 agentic path。
 
 ### Step 4. `analysis_plan.json`
 
@@ -408,7 +408,6 @@ python scripts/ocean-loss-transfer/validate_loss.py --loss_file ... --mode full
 - `loss_transfer/ir/extract_loss_ir.py`
 - `loss_transfer/ir/write_loss_ir.py`
 - `loss_transfer/ir/check_compatibility.py`
-- `loss_transfer/generation/generate_patch.py`
 
 当前推荐理解是：
 
