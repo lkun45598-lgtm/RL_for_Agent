@@ -18,6 +18,7 @@ from loss_transfer.attempts.integration_policy import (  # noqa: E402
 )
 from loss_transfer.agent.agent_edit_workspace import resolve_requested_override_files  # noqa: E402
 from loss_transfer.agent.agent_repair_loop import _normalize_attempts  # noqa: E402
+from loss_transfer.common.integration_path import IntegrationPathContractError  # noqa: E402
 
 
 class IntegrationPolicyTests(unittest.TestCase):
@@ -48,6 +49,17 @@ class IntegrationPolicyTests(unittest.TestCase):
 
         self.assertEqual(resolved, 'adapter_wrapper')
 
+    def test_task_context_alias_path_is_mapped_to_canonical_contract(self) -> None:
+        task_context = {
+            'integration_assessment': {
+                'recommended_path': 'add_loss_inputs_adapter',
+            }
+        }
+
+        resolved = resolve_recommended_integration_path(task_context)
+
+        self.assertEqual(resolved, 'adapter_wrapper')
+
     def test_default_policy_for_extend_model_outputs(self) -> None:
         policy = build_attempt_edit_policy('extend_model_outputs')
 
@@ -61,6 +73,10 @@ class IntegrationPolicyTests(unittest.TestCase):
             ],
         )
         self.assertEqual(policy['required_edit_paths'], ['models'])
+
+    def test_unknown_path_raises_contract_error_instead_of_falling_back(self) -> None:
+        with self.assertRaises(IntegrationPathContractError):
+            build_attempt_edit_policy('agent_decides')
 
     def test_merge_attempt_keeps_existing_required_paths(self) -> None:
         merged = merge_attempt_with_edit_policy(
@@ -114,6 +130,21 @@ class IntegrationPolicyTests(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]['required_edit_paths'], ['models'])
         self.assertIn('models', attempts[0]['files_to_edit'])
+
+    def test_invalid_analysis_plan_path_raises_contract_error(self) -> None:
+        task_context = {
+            'integration_assessment': {
+                'recommended_path': 'loss_only',
+            }
+        }
+        analysis_plan = {
+            'integration_decision': {
+                'path': 'agent_decides',
+            }
+        }
+
+        with self.assertRaises(IntegrationPathContractError):
+            resolve_recommended_integration_path(task_context, analysis_plan)
 
     def test_override_resolution_follows_recommended_path_defaults(self) -> None:
         task_context = {

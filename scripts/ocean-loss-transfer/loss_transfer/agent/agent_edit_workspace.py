@@ -19,6 +19,7 @@ from loss_transfer.attempts.integration_policy import (
     resolve_recommended_integration_path,
 )
 from loss_transfer.common.paths import PROJECT_ROOT, SANDBOX_DIR, TRAINING_PIPELINE_DIR
+from loss_transfer.common.routing_audit import build_routing_audit
 
 
 _PROJECT_ROOT = PROJECT_ROOT
@@ -71,6 +72,7 @@ def resolve_requested_override_files(
     task_context: Dict[str, Any],
     attempt_spec: Dict[str, Any],
     *,
+    analysis_plan: Optional[Dict[str, Any]] = None,
     override_file_sources: Optional[Dict[str, Path]] = None,
     override_tree_sources: Optional[Dict[str, Path]] = None,
     override_file_aliases: Optional[Dict[str, list[str]]] = None,
@@ -107,7 +109,7 @@ def resolve_requested_override_files(
         if candidate_name in tree_sources and candidate_name not in resolved_trees:
             resolved_trees.append(candidate_name)
 
-    recommended_path = resolve_recommended_integration_path(task_context)
+    recommended_path = resolve_recommended_integration_path(task_context, analysis_plan)
     if integration_path_needs_adapter_overrides(recommended_path) and 'sandbox_model_adapter.py' not in resolved_files:
         resolved_files.append('sandbox_model_adapter.py')
     if integration_path_needs_adapter_overrides(recommended_path) and 'sandbox_trainer.py' not in resolved_files:
@@ -126,6 +128,7 @@ def prepare_attempt_edit_workspace(
     task_context: Dict[str, Any],
     attempt_spec: Dict[str, Any],
     output_code_path: Path,
+    analysis_plan: Optional[Dict[str, Any]] = None,
     override_file_sources: Optional[Dict[str, Path]] = None,
     override_tree_sources: Optional[Dict[str, Path]] = None,
     additional_editable_targets: Optional[list[Dict[str, Any]]] = None,
@@ -142,7 +145,20 @@ def prepare_attempt_edit_workspace(
         )
     override_dir = attempt_dir / 'sandbox_overrides'
     integration = task_context.get('integration_assessment', {}) if isinstance(task_context.get('integration_assessment'), dict) else {}
-    recommended_path = resolve_recommended_integration_path(task_context)
+    recommended_path = resolve_recommended_integration_path(task_context, analysis_plan)
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    routing_audit = build_routing_audit(
+        paper_slug=str(task_context.get('paper_slug', 'paper')),
+        task_context=task_context,
+        analysis_plan=analysis_plan,
+        routing_audit_path=str(paths.get('routing_audit_path')) if paths.get('routing_audit_path') else None,
+        analysis_plan_path=str(paths.get('analysis_plan_path')) if paths.get('analysis_plan_path') else None,
+    )
+    effective_route = (
+        routing_audit.get('routes', {}).get('effective', {})
+        if isinstance(routing_audit.get('routes'), dict)
+        else {}
+    )
     editable_targets = [
         {
             'path': str(output_code_path),
@@ -154,6 +170,7 @@ def prepare_attempt_edit_workspace(
     override_targets = resolve_requested_override_files(
         task_context,
         attempt_spec,
+        analysis_plan=analysis_plan,
         override_file_sources=file_sources,
         override_tree_sources=tree_sources,
     )
@@ -209,7 +226,10 @@ def prepare_attempt_edit_workspace(
         'sandbox_override_dir': str(override_dir) if (override_files or override_trees) else None,
         'routing_policy': {
             'recommended_path': recommended_path,
+            'recommended_path_source': effective_route.get('selected_from'),
+            'recommended_path_status': effective_route.get('status'),
             'requires_model_changes': bool(integration.get('requires_model_changes')),
+            'routing_audit_path': routing_audit.get('paths', {}).get('routing_audit_path'),
             'validator_behavior': (
                 'For formulas that need model-provided loss inputs, validators prefer '
                 'attempt-scoped model-output extension when the copied model constructor '

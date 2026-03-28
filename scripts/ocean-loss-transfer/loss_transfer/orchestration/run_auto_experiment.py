@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from loss_transfer.agent.agent_artifact_generator import generate_analysis_plan
+from loss_transfer.common.contract_validation import write_contract_validation
+from loss_transfer.common.run_manifest import write_run_manifest
 from loss_transfer.context.context_builder import build_task_context
 
 
@@ -39,6 +42,46 @@ def run_auto_experiment(
         dataset_root=dataset_root,
         output_dir=output_dir,
     )
+    paths = task_context.get('paths', {}) if isinstance(task_context.get('paths'), dict) else {}
+    experiment_dir = Path(str(paths.get('experiment_dir') or output_dir or '.')).expanduser().resolve()
+    run_manifest_result = write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=paper_slug,
+        task_context=task_context,
+        mode=mode,
+        bootstrap_formula=bootstrap_formula,
+        max_attempts=max_attempts,
+        auto_generate_plan=auto_generate_plan,
+        service_url=service_url,
+        analysis_plan_path=analysis_plan_json,
+    )
+    context_validation = write_contract_validation(
+        experiment_dir=experiment_dir,
+        paper_slug=paper_slug,
+        task_context=task_context,
+    )
+    run_manifest_result = write_run_manifest(
+        experiment_dir=experiment_dir,
+        paper_slug=paper_slug,
+        task_context=task_context,
+        mode=mode,
+        bootstrap_formula=bootstrap_formula,
+        max_attempts=max_attempts,
+        auto_generate_plan=auto_generate_plan,
+        service_url=service_url,
+        analysis_plan_path=analysis_plan_json,
+    )
+    if context_validation.get('status') == 'error':
+        return {
+            'status': 'context_error',
+            'paper_slug': paper_slug,
+            'task_context_path': task_context.get('paths', {}).get('task_context_path'),
+            'routing_audit_path': context_validation.get('paths', {}).get('routing_audit_path'),
+            'contract_validation_path': context_validation.get('contract_validation_path'),
+            'run_manifest_path': run_manifest_result.get('run_manifest_path'),
+            'contract_validation_errors': context_validation.get('errors', []),
+            'contract_validation_warnings': context_validation.get('warnings', []),
+        }
 
     if mode == 'context_only':
         return {
@@ -47,6 +90,9 @@ def run_auto_experiment(
             'task_context_path': task_context.get('paths', {}).get('task_context_path'),
             'loss_formula_path': task_context.get('paths', {}).get('loss_formula_path'),
             'loss_ir_path': task_context.get('paths', {}).get('loss_ir_path'),
+            'routing_audit_path': context_validation.get('paths', {}).get('routing_audit_path'),
+            'contract_validation_path': context_validation.get('contract_validation_path'),
+            'run_manifest_path': run_manifest_result.get('run_manifest_path'),
             'decision_trace_path': task_context.get('paths', {}).get('decision_trace_path'),
             'rl_dataset_path': task_context.get('paths', {}).get('rl_dataset_path'),
         }
@@ -65,6 +111,9 @@ def run_auto_experiment(
                 'paper_slug': paper_slug,
                 'task_context_path': task_context.get('paths', {}).get('task_context_path'),
                 'loss_formula_path': task_context.get('paths', {}).get('loss_formula_path'),
+                'routing_audit_path': context_validation.get('paths', {}).get('routing_audit_path'),
+                'contract_validation_path': context_validation.get('contract_validation_path'),
+                'run_manifest_path': run_manifest_result.get('run_manifest_path'),
                 'plan_generation': plan_generation,
             }
         analysis_plan_json = plan_generation.get('analysis_plan_path')
@@ -83,6 +132,8 @@ def run_auto_experiment(
     )
     if plan_generation is not None:
         result['plan_generation'] = plan_generation
+    result.setdefault('run_manifest_path', run_manifest_result.get('run_manifest_path'))
+    result.setdefault('contract_validation_path', context_validation.get('contract_validation_path'))
     return result
 
 

@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from loss_transfer.common.integration_path import (
+    IntegrationPathContractError,
+    normalize_integration_path_or_error,
+)
 
-_DEFAULT_INTEGRATION_PATH = 'agent_decides'
 _ATTEMPT_EDIT_POLICIES: Dict[str, Dict[str, List[str]]] = {
     'loss_only': {
         'files_to_edit': ['candidate_loss.py'],
@@ -41,10 +44,6 @@ _ATTEMPT_EDIT_POLICIES: Dict[str, Dict[str, List[str]]] = {
         ],
         'required_edit_paths': ['models'],
     },
-    _DEFAULT_INTEGRATION_PATH: {
-        'files_to_edit': ['candidate_loss.py'],
-        'required_edit_paths': [],
-    },
 }
 
 
@@ -55,10 +54,10 @@ def normalize_string_list(value: Any) -> List[str]:
 
 
 def normalize_integration_path(path: Optional[str]) -> str:
-    if not isinstance(path, str):
-        return _DEFAULT_INTEGRATION_PATH
-    normalized = path.strip().lower()
-    return normalized or _DEFAULT_INTEGRATION_PATH
+    return normalize_integration_path_or_error(
+        path,
+        field_name='integration_path',
+    )
 
 
 def resolve_recommended_integration_path(
@@ -69,9 +68,10 @@ def resolve_recommended_integration_path(
         integration_decision = analysis_plan.get('integration_decision')
         if isinstance(integration_decision, dict):
             path = integration_decision.get('path')
-            normalized = normalize_integration_path(path if isinstance(path, str) else None)
-            if normalized != _DEFAULT_INTEGRATION_PATH:
-                return normalized
+            return normalize_integration_path_or_error(
+                path,
+                field_name='analysis_plan.integration_decision.path',
+            )
 
     integration_assessment = (
         task_context.get('integration_assessment', {})
@@ -79,12 +79,19 @@ def resolve_recommended_integration_path(
         else {}
     )
     path = integration_assessment.get('recommended_path')
-    return normalize_integration_path(path if isinstance(path, str) else None)
+    return normalize_integration_path_or_error(
+        path,
+        field_name='task_context.integration_assessment.recommended_path',
+    )
 
 
 def build_attempt_edit_policy(integration_path: str) -> Dict[str, List[str]]:
     normalized = normalize_integration_path(integration_path)
-    policy = _ATTEMPT_EDIT_POLICIES.get(normalized, _ATTEMPT_EDIT_POLICIES[_DEFAULT_INTEGRATION_PATH])
+    policy = _ATTEMPT_EDIT_POLICIES.get(normalized)
+    if policy is None:
+        raise IntegrationPathContractError(
+            f'No edit policy registered for integration_path={integration_path!r}'
+        )
     return {
         'files_to_edit': list(policy['files_to_edit']),
         'required_edit_paths': list(policy['required_edit_paths']),

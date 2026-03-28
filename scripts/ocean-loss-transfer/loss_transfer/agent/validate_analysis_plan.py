@@ -10,17 +10,29 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
-
-_ALLOWED_INTEGRATION_PATHS = {
-    'loss_only',
-    'adapter_wrapper',
-    'extend_model_outputs',
-    'model_surgery',
-}
+from loss_transfer.common.integration_path import (
+    describe_integration_path,
+    format_allowed_integration_paths,
+)
 _ALLOWED_ATTEMPT_KINDS = {'agent_code', 'formula_variant'}
 _ALLOWED_FORMULA_VARIANTS = {'faithful', 'stabilized'}
+_EVIDENCE_ROOT_ALIASES = {
+    'paper': 'paper_analysis',
+    'code': 'code_analysis',
+    'formula': 'formula_spec',
+    'formula_interface': 'formula_interface',
+    'loss_spec': 'loss_spec',
+    'compatibility': 'compatibility',
+    'integration': 'integration_assessment',
+    'prepared_context': 'prepared_context',
+    'analysis_evidence_probe_request': 'analysis_evidence_probe_request',
+    'analysis_evidence_probe_result': 'analysis_evidence_probe_result',
+    'task_context': 'task_context',
+    'result': 'runtime_result',
+    'repair_plan': 'repair_plan',
+}
 
 
 def _as_non_empty_str(value: Any) -> Optional[str]:
@@ -53,6 +65,121 @@ def _validate_string_list(
     return result
 
 
+def _load_optional_json_object(path: Optional[str]) -> Optional[Dict[str, Any]]:
+    candidate = _as_non_empty_str(path)
+    if candidate is None:
+        return None
+    file_path = Path(candidate).expanduser().resolve()
+    if not file_path.exists():
+        return None
+    try:
+        data = json.loads(file_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _build_available_evidence_roots(task_context: Optional[Dict[str, Any]]) -> Set[str]:
+    if not isinstance(task_context, dict):
+        return set()
+
+    available_roots: Set[str] = {'task_context'}
+    for field_name in (
+        'paper_analysis',
+        'code_analysis',
+        'formula_spec',
+        'formula_interface',
+        'loss_spec',
+        'compatibility',
+        'integration_assessment',
+        'prepared_context',
+        'legacy_loss_ir_status',
+    ):
+        if isinstance(task_context.get(field_name), dict) and task_context.get(field_name):
+            available_roots.add(field_name)
+
+    paths = task_context.get('paths')
+    if isinstance(paths, dict):
+        probe_request = _load_optional_json_object(paths.get('analysis_evidence_probe_request_path'))
+        probe_result = _load_optional_json_object(paths.get('analysis_evidence_probe_result_path'))
+        if probe_request:
+            available_roots.add('analysis_evidence_probe_request')
+        if probe_result:
+            available_roots.add('analysis_evidence_probe_result')
+
+    return available_roots
+
+
+def _extract_evidence_root(reference: str) -> Optional[str]:
+    stripped = reference.strip()
+    if not stripped:
+        return None
+
+    for separator in ('.', '['):
+        if separator in stripped:
+            stripped = stripped.split(separator, 1)[0]
+            break
+    return stripped or None
+
+
+def _resolve_evidence_root(reference: str, available_roots: Set[str]) -> Optional[str]:
+    root = _extract_evidence_root(reference)
+    if root is None:
+        return None
+    if root in available_roots:
+        return root
+
+    canonical_root = _EVIDENCE_ROOT_ALIASES.get(root)
+    if canonical_root is None:
+        return None
+    if canonical_root == 'task_context':
+        return canonical_root
+    if canonical_root == 'runtime_result':
+        return canonical_root
+    if canonical_root == 'repair_plan':
+        return canonical_root
+    if canonical_root in available_roots:
+        return canonical_root
+    return None
+
+
+def _probe_result_required(task_context: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(task_context, dict):
+        return False
+    paths = task_context.get('paths')
+    if not isinstance(paths, dict):
+        return False
+    request_payload = _load_optional_json_object(paths.get('analysis_evidence_probe_request_path'))
+    result_payload = _load_optional_json_object(paths.get('analysis_evidence_probe_result_path'))
+    if not request_payload or not result_payload:
+        return False
+    return _as_non_empty_str(request_payload.get('status')) == 'probe_needed'
+
+
+def _validate_evidence_ref_bundle(
+    *,
+    evidence_refs: List[str],
+    field_name: str,
+    available_roots: Set[str],
+    errors: List[str],
+    warnings: List[str],
+    resolved_probe_refs: List[str],
+) -> None:
+    if not evidence_refs:
+        return
+
+    for evidence_ref in evidence_refs:
+        resolved_root = _resolve_evidence_root(evidence_ref, available_roots)
+        if resolved_root is None:
+            warnings.append(
+                f'{field_name} contains an unknown evidence ref {evidence_ref!r}; '
+                'Agent traceability may be weak'
+            )
+            continue
+        if resolved_root == 'analysis_evidence_probe_result':
+            resolved_probe_refs.append(evidence_ref)
+
+
 def _validate_integration_decision(
     value: Any,
     *,
@@ -76,11 +203,24 @@ def _validate_integration_decision(
 
     if path is None:
         errors.append('integration_decision.path must be a non-empty string')
-    elif path not in _ALLOWED_INTEGRATION_PATHS:
-        errors.append(
-            'integration_decision.path must be one of: '
-            + ', '.join(sorted(_ALLOWED_INTEGRATION_PATHS))
-        )
+        path_raw = None
+        path_status = None
+    else:
+        path_info = describe_integration_path(path)
+        path_raw = path
+        path_status = path_info.get('status')
+        canonical_path = path_info.get('canonical_path')
+        if canonical_path is None:
+            errors.append(
+                'integration_decision.path must be one of: '
+                + format_allowed_integration_paths()
+            )
+        else:
+            if path_info.get('status') == 'alias_mapped':
+                warnings.append(
+                    f'integration_decision.path normalized from {path!r} to {canonical_path!r}'
+                )
+            path = canonical_path
 
     if rationale is None:
         errors.append('integration_decision.rationale must be a non-empty string')
@@ -89,6 +229,9 @@ def _validate_integration_decision(
 
     return {
         'path': path,
+        'path_raw': path_raw,
+        'path_status': path_status,
+        'path_source': 'analysis_plan.integration_decision',
         'rationale': rationale,
         'evidence_refs': evidence_refs,
     }
@@ -255,9 +398,16 @@ def validate_attempt_spec(attempt: Any) -> Dict[str, Any]:
     }
 
 
-def validate_analysis_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+def validate_analysis_plan(
+    plan: Dict[str, Any],
+    *,
+    task_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     errors: List[str] = []
     warnings: List[str] = []
+    available_evidence_roots = _build_available_evidence_roots(task_context)
+    probe_result_required = _probe_result_required(task_context)
+    resolved_probe_refs: List[str] = []
 
     if not isinstance(plan, dict):
         return {
@@ -280,6 +430,15 @@ def validate_analysis_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
         errors=errors,
         warnings=warnings,
     )
+    if isinstance(integration_decision, dict):
+        _validate_evidence_ref_bundle(
+            evidence_refs=integration_decision.get('evidence_refs', []),
+            field_name='integration_decision.evidence_refs',
+            available_roots=available_evidence_roots,
+            errors=errors,
+            warnings=warnings,
+            resolved_probe_refs=resolved_probe_refs,
+        )
 
     raw_attempts = plan.get('attempts')
     if not isinstance(raw_attempts, list):
@@ -295,10 +454,24 @@ def validate_analysis_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
             warnings=warnings,
         )
         if normalized is not None:
+            _validate_evidence_ref_bundle(
+                evidence_refs=normalized.get('evidence_refs', []),
+                field_name=f'attempts[{idx}].evidence_refs',
+                available_roots=available_evidence_roots,
+                errors=errors,
+                warnings=warnings,
+                resolved_probe_refs=resolved_probe_refs,
+            )
             normalized_attempts.append(normalized)
 
     if not normalized_attempts:
         errors.append('attempts must contain at least one executable attempt')
+
+    if probe_result_required and not resolved_probe_refs:
+        errors.append(
+            'analysis_plan must reference analysis_evidence_probe_result in integration_decision.evidence_refs '
+            'or attempts[*].evidence_refs when a probe was requested and executed'
+        )
 
     status = 'ok' if not errors else 'error'
     if status == 'ok' and warnings:
@@ -313,6 +486,11 @@ def validate_analysis_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
             'stop_on_first_pass': stop_on_first_pass if isinstance(stop_on_first_pass, bool) else False,
             'integration_decision': integration_decision,
             'attempts': normalized_attempts,
+            'evidence_validation': {
+                'available_roots': sorted(available_evidence_roots),
+                'probe_result_required': probe_result_required,
+                'probe_result_refs': resolved_probe_refs,
+            },
         } if not errors else None,
     }
 

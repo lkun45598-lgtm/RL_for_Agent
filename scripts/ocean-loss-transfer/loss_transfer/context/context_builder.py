@@ -19,6 +19,7 @@ from loss_transfer.formula.extract_loss_formula import extract_loss_formula_draf
 from loss_transfer.formula.formula_interface_analysis import analyze_formula_interface
 from loss_transfer.ir.loss_ir_schema import LossIR
 from loss_transfer.context.prepare_context import prepare_context
+from loss_transfer.common.routing_audit import write_routing_audit
 from loss_transfer.common.trajectory_logger import ensure_experiment_dir, write_json
 
 
@@ -127,8 +128,24 @@ def _summarize_paper_context(prepared_context: Optional[Dict[str, Any]]) -> Dict
 
 
 def _summarize_code_context(prepared_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    primary_files = ((prepared_context or {}).get('primary_files') or []) if isinstance(prepared_context, dict) else []
-    if not isinstance(primary_files, list) or not primary_files:
+    prepared = prepared_context if isinstance(prepared_context, dict) else {}
+    primary_files = prepared.get('primary_files') or []
+    code_inventory = prepared.get('code_inventory') or {}
+    evidence_graph = prepared.get('evidence_graph') or {}
+    if not isinstance(primary_files, list):
+        primary_files = []
+    if not isinstance(code_inventory, dict):
+        code_inventory = {}
+    if not isinstance(evidence_graph, dict):
+        evidence_graph = {}
+
+    inventory_categories = {
+        'loss_files': code_inventory.get('loss_files') if isinstance(code_inventory.get('loss_files'), list) else [],
+        'trainer_files': code_inventory.get('trainer_files') if isinstance(code_inventory.get('trainer_files'), list) else [],
+        'model_files': code_inventory.get('model_files') if isinstance(code_inventory.get('model_files'), list) else [],
+        'config_files': code_inventory.get('config_files') if isinstance(code_inventory.get('config_files'), list) else [],
+    }
+    if not primary_files and not any(inventory_categories.values()):
         return {
             'available': False,
             'notes': ['No primary loss-related code files were found'],
@@ -143,14 +160,46 @@ def _summarize_code_context(prepared_context: Optional[Dict[str, Any]]) -> Dict[
             'priority': item.get('priority'),
             'functions': item.get('functions', []),
             'imports': item.get('imports', []),
+            'signals': item.get('signals', []),
             'content_preview': _collapse_text(str(item.get('content', '')), max_chars=1200),
         })
+    for category, items in inventory_categories.items():
+        if category == 'loss_files':
+            continue
+        for item in items[:2]:
+            if not isinstance(item, dict):
+                continue
+            focus_files.append({
+                'path': item.get('path'),
+                'category': category,
+                'priority': item.get('priority'),
+                'functions': item.get('functions', []),
+                'imports': item.get('imports', []),
+                'signals': item.get('signals', []),
+                'content_preview': _collapse_text(str(item.get('content_preview', '')), max_chars=900),
+            })
 
     return {
         'available': True,
         'focus_files': focus_files,
+        'inventory_summary': {
+            'loss_files_count': len(inventory_categories['loss_files']),
+            'trainer_files_count': len(inventory_categories['trainer_files']),
+            'model_files_count': len(inventory_categories['model_files']),
+            'config_files_count': len(inventory_categories['config_files']),
+        },
+        'evidence_graph': {
+            'claims': evidence_graph.get('claims', [])[:6] if isinstance(evidence_graph.get('claims'), list) else [],
+            'recommended_read_order': (
+                evidence_graph.get('recommended_read_order', [])[:6]
+                if isinstance(evidence_graph.get('recommended_read_order'), list)
+                else []
+            ),
+        },
+        'evidence_graph_path': prepared.get('evidence_graph_path'),
         'notes': [
             'Agent should inspect where the paper loss is computed: standalone loss file, training loop, or model.forward.',
+            'Use trainer/model/config evidence together; loss-only files are not sufficient for deep integration paths.',
             'If the paper computes auxiliary tensors inside model.forward, do not force a loss-only migration.',
         ],
     }
@@ -167,7 +216,7 @@ def _build_integration_assessment(
         'loss_ir_available': has_loss_ir,
         'loss_ir_role': 'optional_reference' if has_loss_ir else 'not_required_for_agent_analysis',
         'loss_only_pipeline_viable': None,
-        'recommended_path': 'agent_decides',
+        'recommended_path': None,
         'change_level': None,
         'requires_model_changes': None,
         'notes': [],
@@ -175,7 +224,25 @@ def _build_integration_assessment(
 
     if formula_interface:
         assessment['loss_only_pipeline_viable'] = formula_interface.get('loss_only_pipeline_compatible')
-        assessment['recommended_path'] = formula_interface.get('recommended_integration_path', 'agent_decides')
+        assessment['recommended_path'] = formula_interface.get('recommended_integration_path')
+        assessment['recommended_path_raw'] = formula_interface.get('recommended_integration_path_raw')
+        assessment['recommended_path_status'] = formula_interface.get('recommended_integration_path_status')
+        assessment['recommended_path_source'] = 'formula_interface'
+        assessment['recommended_path_reason'] = '; '.join(
+            str(item).strip()
+            for item in formula_interface.get('change_level_reasons', [])
+            if isinstance(item, str) and str(item).strip()
+        ) or None
+        evidence_refs: List[str] = []
+        if formula_interface.get('change_level_reasons'):
+            evidence_refs.append('formula_interface.change_level_reasons')
+        if formula_interface.get('extra_required_variables'):
+            evidence_refs.append('formula_interface.extra_required_variables')
+        if formula_interface.get('structure_hints'):
+            evidence_refs.append('formula_interface.structure_hints')
+        if formula_interface.get('issues'):
+            evidence_refs.append('formula_interface.issues')
+        assessment['recommended_path_evidence_refs'] = evidence_refs
         assessment['change_level'] = formula_interface.get('change_level')
         assessment['change_level_label'] = formula_interface.get('change_level_label')
         assessment['requires_model_changes'] = formula_interface.get('requires_model_changes')
@@ -183,6 +250,10 @@ def _build_integration_assessment(
         assessment['issues'] = formula_interface.get('issues', [])
         assessment['notes'].append(
             'Use interface_analysis to decide whether the SR model needs loss_inputs / adapter heads / output extension.'
+        )
+    else:
+        assessment['notes'].append(
+            'No formula_interface analysis is available yet; generate or validate loss_formula.json before relying on bootstrap routing.'
         )
 
     if loss_spec:
@@ -290,6 +361,13 @@ def build_task_context(
             'loss_ir_path': str(loss_ir_path) if loss_ir_path.exists() else None,
             'loss_formula_path': str(formula_path) if formula_path.exists() else None,
             'loss_spec_path': str(loss_spec_path) if loss_spec_path.exists() else None,
+            'run_manifest_path': str(experiment_dir / 'run_manifest.json'),
+            'routing_audit_path': str(experiment_dir / 'routing_audit.json'),
+            'contract_validation_path': str(experiment_dir / 'contract_validation.json'),
+            'evidence_graph_path': str(experiment_dir / 'evidence_graph.json'),
+            'analysis_evidence_probe_request_path': str(experiment_dir / 'analysis_evidence_probe_request.json'),
+            'analysis_evidence_probe_script_path': str(experiment_dir / 'analysis_evidence_probe.py'),
+            'analysis_evidence_probe_result_path': str(experiment_dir / 'analysis_evidence_probe_result.json'),
             'trajectory_path': str(experiment_dir / 'trajectory.jsonl'),
             'analysis_plan_path': str(experiment_dir / 'analysis_plan.json'),
             'decision_trace_path': str(experiment_dir / 'decision_trace.jsonl'),
@@ -342,6 +420,7 @@ def build_task_context(
             'Use loss_formula.json as the formula source of truth for latex, params, and symbol_map, but validate it against paper/code evidence.',
             'Keep sandbox_loss(pred, target, mask=None, **kwargs) as the stable integration surface when the paper allows loss-only migration.',
             'If integration_assessment indicates adapter_wrapper or extend_model_outputs, modify the adapter/model path intentionally instead of hacking the loss.',
+            'If evidence is insufficient, you may first create a read-only analysis evidence probe under the experiment directory to inspect repo files and write JSON findings.',
             'Treat loss_ir as optional supporting material, not the main brain of the system.',
             'If you output an agent_code attempt, include executable code, a concrete code_path, or a precise objective that a later Agent pass can turn into candidate_loss.py.',
             'For follow-up attempts after a failure, explicitly record strategy_delta so later RL/controller logic can see why this attempt differs from the previous one.',
@@ -350,4 +429,9 @@ def build_task_context(
     }
 
     write_json(task_context_path, task_context)
+    write_routing_audit(
+        experiment_dir=experiment_dir,
+        paper_slug=paper_slug,
+        task_context=task_context,
+    )
     return task_context

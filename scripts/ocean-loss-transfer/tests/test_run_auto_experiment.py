@@ -17,10 +17,17 @@ class RunAutoExperimentTests(unittest.TestCase):
     def _task_context(self) -> dict[str, object]:
         return {
             'paper_slug': 'sea_raft',
+            'integration_assessment': {
+                'recommended_path': 'loss_only',
+            },
             'paths': {
+                'experiment_dir': '/tmp/exp',
                 'task_context_path': '/tmp/task_context.json',
                 'loss_formula_path': '/tmp/loss_formula.json',
                 'loss_ir_path': '/tmp/loss_ir.yaml',
+                'routing_audit_path': '/tmp/routing_audit.json',
+                'contract_validation_path': '/tmp/contract_validation.json',
+                'run_manifest_path': '/tmp/run_manifest.json',
                 'decision_trace_path': '/tmp/decision_trace.jsonl',
                 'rl_dataset_path': '/tmp/rl_decision_dataset.jsonl',
             },
@@ -30,6 +37,16 @@ class RunAutoExperimentTests(unittest.TestCase):
         task_context = self._task_context()
 
         with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_run_manifest',
+            return_value={'run_manifest_path': '/tmp/run_manifest.json'},
+        ), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_contract_validation',
+            return_value={
+                'status': 'ok',
+                'contract_validation_path': '/tmp/contract_validation.json',
+                'paths': {'routing_audit_path': '/tmp/routing_audit.json'},
+            },
+        ), patch(
             'loss_transfer.orchestration.run_auto_experiment.generate_analysis_plan'
         ) as mock_generate:
             result = run_auto_experiment(
@@ -43,6 +60,8 @@ class RunAutoExperimentTests(unittest.TestCase):
         self.assertEqual(result['task_context_path'], '/tmp/task_context.json')
         self.assertEqual(result['loss_formula_path'], '/tmp/loss_formula.json')
         self.assertEqual(result['loss_ir_path'], '/tmp/loss_ir.yaml')
+        self.assertEqual(result['run_manifest_path'], '/tmp/run_manifest.json')
+        self.assertEqual(result['contract_validation_path'], '/tmp/contract_validation.json')
         self.assertEqual(result['decision_trace_path'], '/tmp/decision_trace.jsonl')
         self.assertEqual(result['rl_dataset_path'], '/tmp/rl_decision_dataset.jsonl')
         mock_generate.assert_not_called()
@@ -61,6 +80,16 @@ class RunAutoExperimentTests(unittest.TestCase):
         }
 
         with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_run_manifest',
+            return_value={'run_manifest_path': '/tmp/run_manifest.json'},
+        ), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_contract_validation',
+            return_value={
+                'status': 'ok',
+                'contract_validation_path': '/tmp/contract_validation.json',
+                'paths': {'routing_audit_path': '/tmp/routing_audit.json'},
+            },
+        ), patch(
             'loss_transfer.orchestration.run_auto_experiment.generate_analysis_plan',
             return_value=plan_generation,
         ) as mock_generate, patch(
@@ -80,6 +109,7 @@ class RunAutoExperimentTests(unittest.TestCase):
 
         self.assertEqual(result['status'], 'completed')
         self.assertEqual(result['plan_generation'], plan_generation)
+        self.assertEqual(result['run_manifest_path'], '/tmp/run_manifest.json')
         mock_generate.assert_called_once()
         mock_loop.assert_called_once()
         loop_kwargs = mock_loop.call_args.kwargs
@@ -97,6 +127,16 @@ class RunAutoExperimentTests(unittest.TestCase):
         }
 
         with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_run_manifest',
+            return_value={'run_manifest_path': '/tmp/run_manifest.json'},
+        ), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_contract_validation',
+            return_value={
+                'status': 'ok',
+                'contract_validation_path': '/tmp/contract_validation.json',
+                'paths': {'routing_audit_path': '/tmp/routing_audit.json'},
+            },
+        ), patch(
             'loss_transfer.orchestration.run_auto_experiment.generate_analysis_plan',
             return_value=plan_generation,
         ), patch('loss_transfer.agent.agent_repair_loop.run_agent_repair_loop') as mock_loop:
@@ -108,8 +148,39 @@ class RunAutoExperimentTests(unittest.TestCase):
 
         self.assertEqual(result['status'], 'plan_generation_failed')
         self.assertEqual(result['paper_slug'], 'sea_raft')
+        self.assertEqual(result['run_manifest_path'], '/tmp/run_manifest.json')
         self.assertEqual(result['plan_generation'], plan_generation)
         mock_loop.assert_not_called()
+
+    def test_context_only_contract_validation_failure_returns_context_error(self) -> None:
+        task_context = self._task_context()
+
+        with patch('loss_transfer.orchestration.run_auto_experiment.build_task_context', return_value=task_context), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_run_manifest',
+            return_value={'run_manifest_path': '/tmp/run_manifest.json'},
+        ), patch(
+            'loss_transfer.orchestration.run_auto_experiment.write_contract_validation',
+            return_value={
+                'status': 'error',
+                'contract_validation_path': '/tmp/contract_validation.json',
+                'paths': {'routing_audit_path': '/tmp/routing_audit.json'},
+                'errors': ['task_context.integration_assessment.recommended_path is invalid'],
+                'warnings': [],
+            },
+        ):
+            result = run_auto_experiment(
+                paper_slug='sea_raft',
+                code_repo_path='/repo',
+                output_dir='/tmp/exp',
+                mode='context_only',
+            )
+
+        self.assertEqual(result['status'], 'context_error')
+        self.assertEqual(result['contract_validation_path'], '/tmp/contract_validation.json')
+        self.assertEqual(
+            result['contract_validation_errors'],
+            ['task_context.integration_assessment.recommended_path is invalid'],
+        )
 
 
 if __name__ == '__main__':

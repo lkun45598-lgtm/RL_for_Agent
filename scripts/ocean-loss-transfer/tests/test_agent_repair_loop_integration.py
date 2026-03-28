@@ -22,9 +22,11 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             'paper_slug': paper_slug,
             'inputs': {
                 'dataset_root': '/data1/user/lz/RL_data_test',
+                'code_repo_path': str(experiment_dir),
             },
             'paths': {
                 'task_context_path': str(task_context_path),
+                'contract_validation_path': str(experiment_dir / 'contract_validation.json'),
             },
             'integration_assessment': {
                 'recommended_path': 'adapter_wrapper',
@@ -137,7 +139,10 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
                     },
                 }
 
-            with patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt):
+            with patch(
+                'loss_transfer.agent.agent_repair_loop.write_run_manifest',
+                return_value={'run_manifest_path': str(experiment_dir / 'run_manifest.json')},
+            ), patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt):
                 result = run_agent_repair_loop(
                     task_context,
                     analysis_plan_path=str(input_plan_path),
@@ -155,6 +160,8 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             self.assertEqual(result['best_reward_summary']['primary_metric'], 0.73)
             self.assertEqual(result['decision_trace_count'], 2)
             self.assertTrue(Path(result['decision_trace_path']).exists())
+            self.assertTrue(Path(result['routing_audit_path']).exists())
+            self.assertEqual(result['run_manifest_path'], str(experiment_dir / 'run_manifest.json'))
             self.assertEqual(len(result['attempts']), 2)
             self.assertEqual(len(call_records), 2)
             self.assertEqual(call_records[0]['dataset_root'], '/data1/user/lz/RL_data_test')
@@ -234,7 +241,10 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
                     },
                 }
 
-            with patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt), patch(
+            with patch(
+                'loss_transfer.agent.agent_repair_loop.write_run_manifest',
+                return_value={'run_manifest_path': str(experiment_dir / 'run_manifest.json')},
+            ), patch('loss_transfer.attempts.attempt_executor.execute_attempt', side_effect=fake_execute_attempt), patch(
                 'loss_transfer.agent.agent_repair_loop.generate_followup_attempt',
                 return_value={
                     'status': 'success',
@@ -276,6 +286,8 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
             self.assertEqual(result['best_strategy_delta']['previous_attempt_id'], 1)
             self.assertEqual(result['decision_trace_count'], 2)
             self.assertTrue(Path(result['decision_trace_path']).exists())
+            self.assertTrue(Path(result['routing_audit_path']).exists())
+            self.assertEqual(result['run_manifest_path'], str(experiment_dir / 'run_manifest.json'))
             self.assertEqual(len(call_records), 2)
             self.assertEqual(call_records[1]['attempt_spec']['name'], 'Replanned attempt')
             self.assertEqual(call_records[1]['attempt_spec']['required_edit_paths'], ['sandbox_model_adapter.py'])
@@ -285,6 +297,57 @@ class AgentRepairLoopIntegrationTests(unittest.TestCase):
                 self._read_event_types(experiment_dir),
                 ['task_context_ready', 'attempt_planned', 'attempt_replanned', 'attempt_planned'],
             )
+
+    def test_run_agent_repair_loop_returns_contract_error_for_invalid_analysis_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            experiment_dir = temp_root / 'experiment'
+            experiment_dir.mkdir(parents=True, exist_ok=True)
+            task_context = self._write_task_context(experiment_dir, paper_slug='paper_invalid_plan')
+            bad_plan_path = temp_root / 'bad_analysis_plan.json'
+            bad_plan_path.write_text(
+                json.dumps(
+                    {
+                        'summary': 'Invalid plan',
+                        'stop_on_first_pass': False,
+                        'integration_decision': {
+                            'path': 'agent_decides',
+                            'rationale': 'Let the agent decide everything.',
+                            'evidence_refs': ['paper.loss'],
+                        },
+                        'attempts': [
+                            {
+                                'name': 'Attempt 1',
+                                'kind': 'agent_code',
+                                'objective': 'Try something.',
+                                'evidence_refs': ['paper.loss'],
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding='utf-8',
+            )
+
+            with patch(
+                'loss_transfer.agent.agent_repair_loop.write_run_manifest',
+                return_value={'run_manifest_path': str(experiment_dir / 'run_manifest.json')},
+            ), patch('loss_transfer.attempts.attempt_executor.execute_attempt') as mock_execute:
+                result = run_agent_repair_loop(
+                    task_context,
+                    analysis_plan_path=str(bad_plan_path),
+                    max_attempts=4,
+                    bootstrap_formula=False,
+                    dataset_root='/data1/user/lz/RL_data_test',
+                    output_dir=str(experiment_dir),
+                )
+
+            self.assertEqual(result['status'], 'contract_error')
+            self.assertTrue(Path(result['contract_validation_path']).exists())
+            self.assertTrue(
+                any('analysis_plan.json validation failed' in error for error in result['contract_validation_errors'])
+            )
+            mock_execute.assert_not_called()
 
 
 if __name__ == '__main__':

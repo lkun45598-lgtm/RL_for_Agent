@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+from loss_transfer.common.integration_path import describe_integration_path, normalize_integration_path_or_error
 
 BASE_INTERFACE_VARIABLES = ("pred", "target", "mask")
 _HEAD_FRIENDLY_HINTS = (
@@ -295,13 +296,18 @@ def analyze_formula_interface(spec: Dict[str, Any]) -> Dict[str, Any]:
 
     structure_hints = _collect_structure_hints(spec)
     simple_formula = _is_simple_formula(spec, extra_required_variables)
-    change_level, change_level_label, recommended_path, change_level_reasons = _build_change_level_summary(
+    change_level, change_level_label, recommended_path_raw, change_level_reasons = _build_change_level_summary(
         extra_required_variables=extra_required_variables,
         head_friendly_variables=head_friendly_variables,
         unclear_extra_variables=unclear_extra_variables,
         feature_like_variables=feature_like_variables,
         structure_hints=structure_hints,
         simple_formula=simple_formula,
+    )
+    recommended_path_info = describe_integration_path(recommended_path_raw)
+    recommended_path = normalize_integration_path_or_error(
+        recommended_path_raw,
+        field_name='formula_interface.recommended_integration_path',
     )
 
     issues: List[str] = []
@@ -355,6 +361,8 @@ def analyze_formula_interface(spec: Dict[str, Any]) -> Dict[str, Any]:
         "change_level_label": change_level_label,
         "change_level_reasons": change_level_reasons,
         "recommended_integration_path": recommended_path,
+        "recommended_integration_path_raw": recommended_path_raw,
+        "recommended_integration_path_status": recommended_path_info.get("status"),
         "minimal_change_possible": change_level <= 3,
         "requires_model_changes": change_level >= 4,
         "can_use_original_loss_factory_directly": change_level <= 3,

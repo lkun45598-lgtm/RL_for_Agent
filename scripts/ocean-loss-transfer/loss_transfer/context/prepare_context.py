@@ -3,7 +3,7 @@
 @description 扫描代码仓库，准备 loss transfer 闭环所需的论文/代码上下文材料
 @author Leizheng
 @date 2026-03-23
-@version 1.2.0
+@version 1.3.0
 
 @changelog
   - 2026-03-23 Leizheng: v1.0.0 初始版本
@@ -13,9 +13,9 @@
     - 返回结构化 JSON
   - 2026-03-24 Leizheng: v1.1.0 支持论文 PDF 上下文提取（abstract/sections/loss_snippets）
   - 2026-03-26 OpenAI Codex: v1.2.0 补充 analysis_plan 输出路径，供 Agent 主流程使用
+  - 2026-03-27 OpenAI Codex: v1.3.0 扩展 trainer/model/config 扫描，并输出 evidence_graph.json
 """
 
-import os
 import re
 import json
 import ast
@@ -26,6 +26,315 @@ import argparse
 from loss_transfer.common.paths import LOSS_TRANSFER_EXPERIMENTS_DIR
 
 
+_EXCLUDE_DIRS = {'test', 'tests', 'docs', 'examples', '__pycache__', '.git', 'build', 'dist'}
+_CONFIG_SUFFIXES = {'.yaml', '.yml', '.json', '.toml'}
+_CATEGORY_LIMIT = 8
+_PRIMARY_FILE_LIMIT = 10
+
+
+def _is_excluded(path: Path) -> bool:
+    return any(part in _EXCLUDE_DIRS for part in path.parts)
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding='utf-8', errors='ignore')
+
+
+def _safe_rel_path(repo_path: Path, path: Path) -> str:
+    return str(path.relative_to(repo_path))
+
+
+def _priority_label(score: int) -> str:
+    if score >= 12:
+        return 'high'
+    if score >= 6:
+        return 'medium'
+    return 'low'
+
+
+def _score_loss_candidate(rel_path: str, content: str) -> Dict[str, Any]:
+    lowered_path = rel_path.lower()
+    lowered_content = content.lower()
+    score = 0
+    signals: List[str] = []
+    if any(keyword in lowered_path for keyword in ('loss', 'criterion', 'objective')):
+        score += 10
+        signals.append('loss_filename_keyword')
+    if re.search(r'def\s+\w*loss\w*\s*\(', content, re.IGNORECASE):
+        score += 5
+        signals.append('loss_function_definition')
+    if re.search(r'class\s+\w*Loss\w*\s*[\(:]', content, re.IGNORECASE):
+        score += 5
+        signals.append('loss_class_definition')
+    if 'criterion' in lowered_content:
+        score += 2
+        signals.append('criterion_reference')
+    if 'loss' in lowered_content:
+        score += 1
+        signals.append('loss_token_present')
+    return {'score': score, 'signals': signals}
+
+
+def _score_trainer_candidate(rel_path: str, content: str) -> Dict[str, Any]:
+    lowered_path = rel_path.lower()
+    lowered_content = content.lower()
+    score = 0
+    signals: List[str] = []
+    if any(keyword in lowered_path for keyword in ('train', 'trainer', 'engine', 'runner', 'loop', 'fit')):
+        score += 6
+        signals.append('trainer_path_keyword')
+    if re.search(r'def\s+(train|fit|training_step|run_epoch)\s*\(', content):
+        score += 4
+        signals.append('trainer_function_definition')
+    if 'optimizer' in lowered_content:
+        score += 2
+        signals.append('optimizer_reference')
+    if 'backward(' in lowered_content:
+        score += 3
+        signals.append('backward_call')
+    if 'criterion' in lowered_content or 'loss' in lowered_content:
+        score += 2
+        signals.append('loss_flow_reference')
+    return {'score': score, 'signals': signals}
+
+
+def _score_model_candidate(rel_path: str, content: str) -> Dict[str, Any]:
+    lowered_path = rel_path.lower()
+    lowered_content = content.lower()
+    score = 0
+    signals: List[str] = []
+    if any(keyword in lowered_path for keyword in ('model', 'models', 'network', 'net', 'backbone', 'encoder', 'decoder', 'head')):
+        score += 4
+        signals.append('model_path_keyword')
+    if re.search(r'class\s+\w+\s*\([^)]*(nn\.module|module)', content, re.IGNORECASE):
+        score += 4
+        signals.append('nn_module_class')
+    if re.search(r'def\s+forward\s*\(', content):
+        score += 4
+        signals.append('forward_definition')
+    if 'loss_inputs' in lowered_content:
+        score += 5
+        signals.append('loss_inputs_reference')
+    if 'output_aux_loss_inputs' in lowered_content:
+        score += 5
+        signals.append('output_aux_loss_inputs_reference')
+    if any(token in lowered_content for token in ('aux_loss', 'nf_loss', 'return {', 'return dict(')):
+        score += 2
+        signals.append('structured_output_or_aux_reference')
+    return {'score': score, 'signals': signals}
+
+
+def _score_config_candidate(rel_path: str, content: str) -> Dict[str, Any]:
+    lowered_path = rel_path.lower()
+    lowered_content = content.lower()
+    score = 0
+    signals: List[str] = []
+    if Path(rel_path).suffix.lower() in _CONFIG_SUFFIXES:
+        score += 2
+        signals.append('config_extension')
+    if any(keyword in lowered_path for keyword in ('config', 'configs', 'train', 'experiment')):
+        score += 2
+        signals.append('config_path_keyword')
+    if any(keyword in lowered_content for keyword in ('loss:', 'criterion', '"loss"', "'loss'", 'optimizer', 'scheduler', 'model', 'train')):
+        score += 4
+        signals.append('training_control_reference')
+    return {'score': score, 'signals': signals}
+
+
+def _build_inventory_record(
+    repo_path: Path,
+    file_path: Path,
+    *,
+    category: str,
+    score: int,
+    signals: List[str],
+    content: str,
+) -> Dict[str, Any]:
+    record: Dict[str, Any] = {
+        'path': _safe_rel_path(repo_path, file_path),
+        'abs_path': str(file_path),
+        'category': category,
+        'score': score,
+        'priority': _priority_label(score),
+        'signals': signals,
+        'size': len(content),
+        'content_preview': preprocess_code(content, max_lines=120)[:4000],
+    }
+    if file_path.suffix.lower() == '.py':
+        record['functions'] = extract_functions(content)
+        record['imports'] = extract_imports(content)
+    else:
+        record['functions'] = []
+        record['imports'] = []
+    return record
+
+
+def _collect_code_inventory(repo_path: Path) -> Dict[str, List[Dict[str, Any]]]:
+    inventory: Dict[str, List[Dict[str, Any]]] = {
+        'loss_files': [],
+        'trainer_files': [],
+        'model_files': [],
+        'config_files': [],
+    }
+
+    for file_path in repo_path.rglob('*'):
+        if not file_path.is_file() or _is_excluded(file_path):
+            continue
+
+        suffix = file_path.suffix.lower()
+        if suffix != '.py' and suffix not in _CONFIG_SUFFIXES:
+            continue
+
+        try:
+            content = _read_text(file_path)
+        except Exception:
+            continue
+
+        rel_path = _safe_rel_path(repo_path, file_path)
+        if suffix == '.py':
+            loss_score = _score_loss_candidate(rel_path, content)
+            trainer_score = _score_trainer_candidate(rel_path, content)
+            model_score = _score_model_candidate(rel_path, content)
+            if loss_score['score'] > 0:
+                inventory['loss_files'].append(
+                    _build_inventory_record(
+                        repo_path,
+                        file_path,
+                        category='loss_files',
+                        score=loss_score['score'],
+                        signals=loss_score['signals'],
+                        content=content,
+                    )
+                )
+            if trainer_score['score'] > 0:
+                inventory['trainer_files'].append(
+                    _build_inventory_record(
+                        repo_path,
+                        file_path,
+                        category='trainer_files',
+                        score=trainer_score['score'],
+                        signals=trainer_score['signals'],
+                        content=content,
+                    )
+                )
+            if model_score['score'] > 0:
+                inventory['model_files'].append(
+                    _build_inventory_record(
+                        repo_path,
+                        file_path,
+                        category='model_files',
+                        score=model_score['score'],
+                        signals=model_score['signals'],
+                        content=content,
+                    )
+                )
+            continue
+
+        config_score = _score_config_candidate(rel_path, content)
+        if config_score['score'] > 0:
+            inventory['config_files'].append(
+                _build_inventory_record(
+                    repo_path,
+                    file_path,
+                    category='config_files',
+                    score=config_score['score'],
+                    signals=config_score['signals'],
+                    content=content,
+                )
+            )
+
+    for key, records in inventory.items():
+        records.sort(key=lambda item: (-int(item['score']), int(item['size']), str(item['path'])))
+        inventory[key] = records[:_CATEGORY_LIMIT]
+    return inventory
+
+
+def _claim_paths(records: List[Dict[str, Any]], prefix: str, limit: int = 3) -> List[str]:
+    refs: List[str] = []
+    for idx, _ in enumerate(records[:limit]):
+        refs.append(f'prepared_context.code_inventory.{prefix}[{idx}]')
+    return refs
+
+
+def _build_evidence_graph(code_inventory: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+    loss_files = code_inventory.get('loss_files', [])
+    trainer_files = code_inventory.get('trainer_files', [])
+    model_files = code_inventory.get('model_files', [])
+    config_files = code_inventory.get('config_files', [])
+    claims: List[Dict[str, Any]] = []
+
+    if loss_files:
+        claims.append(
+            {
+                'claim_id': 'loss_files_present',
+                'label': 'Standalone loss-related files are present in the repository.',
+                'strength': 'high',
+                'evidence_refs': _claim_paths(loss_files, 'loss_files'),
+                'why_it_matters': 'Inspect these files first before deciding the paper requires deeper integration.',
+            }
+        )
+    if trainer_files:
+        claims.append(
+            {
+                'claim_id': 'trainer_loss_flow_present',
+                'label': 'Trainer or engine files explicitly wire optimization/loss flow.',
+                'strength': 'medium',
+                'evidence_refs': _claim_paths(trainer_files, 'trainer_files'),
+                'why_it_matters': 'Useful for locating where candidate loss kwargs and validation metrics are passed.',
+            }
+        )
+    aux_model_refs = [
+        item for item in model_files
+        if any(signal in item.get('signals', []) for signal in ('loss_inputs_reference', 'output_aux_loss_inputs_reference', 'structured_output_or_aux_reference'))
+    ]
+    if aux_model_refs:
+        claims.append(
+            {
+                'claim_id': 'model_aux_loss_inputs_present',
+                'label': 'Model files may already emit structured outputs or auxiliary loss inputs.',
+                'strength': 'medium',
+                'evidence_refs': _claim_paths(aux_model_refs, 'model_files'),
+                'why_it_matters': 'Check these files before forcing a loss-only migration path.',
+            }
+        )
+    elif model_files:
+        claims.append(
+            {
+                'claim_id': 'model_forward_present',
+                'label': 'Model forward definitions are available for inspection.',
+                'strength': 'low',
+                'evidence_refs': _claim_paths(model_files, 'model_files'),
+                'why_it_matters': 'Use these files to verify whether the paper loss depends on extra outputs from the model.',
+            }
+        )
+    if config_files:
+        claims.append(
+            {
+                'claim_id': 'config_training_controls_present',
+                'label': 'Configuration files mention training or loss controls.',
+                'strength': 'medium',
+                'evidence_refs': _claim_paths(config_files, 'config_files'),
+                'why_it_matters': 'Config files often expose loss weights, trainer flags, and model names that affect migration.',
+            }
+        )
+
+    recommended_read_order: List[str] = []
+    for key in ('loss_files', 'trainer_files', 'model_files', 'config_files'):
+        recommended_read_order.extend(_claim_paths(code_inventory.get(key, []), key, limit=1))
+
+    return {
+        'schema_version': 'evidence_graph.v1',
+        'summary': {
+            'loss_files_count': len(loss_files),
+            'trainer_files_count': len(trainer_files),
+            'model_files_count': len(model_files),
+            'config_files_count': len(config_files),
+        },
+        'claims': claims,
+        'recommended_read_order': recommended_read_order,
+    }
+
+
 def find_loss_files(repo_path: str) -> List[Dict[str, Any]]:
     """
     智能发现 loss 相关文件
@@ -34,57 +343,18 @@ def find_loss_files(repo_path: str) -> List[Dict[str, Any]]:
     1. 文件名包含 loss/criterion/objective
     2. 文件内容包含 def.*loss / class.*Loss
     """
-    repo_path = Path(repo_path)
-    candidates = []
-
-    # 排除目录
-    exclude_dirs = {'test', 'tests', 'docs', 'examples', '__pycache__', '.git', 'build', 'dist'}
-
-    for py_file in repo_path.rglob('*.py'):
-        # 跳过排除目录
-        if any(ex in py_file.parts for ex in exclude_dirs):
-            continue
-
-        rel_path = py_file.relative_to(repo_path)
-        filename_lower = py_file.name.lower()
-
-        # 优先级评分
-        priority = 0
-
-        # 文件名匹配
-        if any(kw in filename_lower for kw in ['loss', 'criterion', 'objective']):
-            priority += 10
-
-        # 读取内容检查
-        try:
-            content = py_file.read_text(encoding='utf-8', errors='ignore')
-
-            # 关键词匹配
-            if re.search(r'def\s+\w*loss\w*\s*\(', content, re.IGNORECASE):
-                priority += 5
-            if re.search(r'class\s+\w*Loss\w*\s*[\(:]', content, re.IGNORECASE):
-                priority += 5
-            if 'criterion' in content.lower():
-                priority += 2
-            # 很多论文会把 loss 计算塞进 model.forward 里（比如 nf_loss / aux_loss），
-            # 这种情况文件名不含 loss、也没有 def loss()，但依然是关键信息。
-            if 'loss' in content.lower():
-                priority += 1
-
-            if priority > 0:
-                candidates.append({
-                    'path': str(rel_path),
-                    'abs_path': str(py_file),
-                    'priority': priority,
-                    'size': len(content)
-                })
-        except Exception:
-            continue
-
-    # 按优先级排序
-    candidates.sort(key=lambda x: (-x['priority'], x['size']))
-
-    return candidates[:10]  # 最多返回 10 个文件
+    repo_root = Path(repo_path)
+    inventory = _collect_code_inventory(repo_root)
+    return [
+        {
+            'path': record['path'],
+            'abs_path': record['abs_path'],
+            'priority': record['score'],
+            'size': record['size'],
+            'signals': record.get('signals', []),
+        }
+        for record in inventory.get('loss_files', [])[:_PRIMARY_FILE_LIMIT]
+    ]
 
 
 def extract_functions(content: str) -> List[str]:
@@ -169,6 +439,7 @@ def prepare_context(
     output_yaml_path = output_dir / 'loss_ir.yaml'
     output_formula_path = output_dir / 'loss_formula.json'
     output_analysis_plan_path = output_dir / 'analysis_plan.json'
+    evidence_graph_path = output_dir / 'evidence_graph.json'
 
     # 0. 提取论文 PDF 上下文（可选，不影响代码扫描）
     paper_context: Optional[Dict[str, Any]] = None
@@ -189,25 +460,42 @@ def prepare_context(
                 "error": f"extract_paper_text failed: {e}",
             }
 
-    # 1. 发现 loss 文件
-    loss_files = find_loss_files(code_repo_path)
+    # 1. 扫描代码仓库，保留旧 primary_files 接口，并补充 trainer/model/config inventory
+    code_inventory = _collect_code_inventory(repo_path)
+    loss_files = [
+        {
+            'path': record['path'],
+            'abs_path': record['abs_path'],
+            'priority': int(record['score']),
+            'size': int(record['size']),
+            'signals': list(record.get('signals', [])),
+        }
+        for record in code_inventory.get('loss_files', [])[:_PRIMARY_FILE_LIMIT]
+    ]
 
     # 2. 读取文件内容并预处理
     primary_files = []
     for file_info in loss_files:
         try:
-            content = Path(file_info['abs_path']).read_text(encoding='utf-8', errors='ignore')
+            content = _read_text(Path(file_info['abs_path']))
 
             primary_files.append({
                 'path': file_info['path'],
                 'content': preprocess_code(content),
                 'functions': extract_functions(content),
                 'imports': extract_imports(content),
-                'priority': 'high' if file_info['priority'] >= 10 else 'medium'
+                'priority': _priority_label(int(file_info['priority'])),
+                'signals': file_info.get('signals', []),
             })
         except Exception as e:
             print(f"Warning: 无法读取 {file_info['path']}: {e}")
             continue
+
+    evidence_graph = _build_evidence_graph(code_inventory)
+    evidence_graph_path.write_text(
+        json.dumps(evidence_graph, indent=2, ensure_ascii=False),
+        encoding='utf-8',
+    )
 
     # 3. 读取 Loss IR schema
     schema_doc = '见 loss_transfer/ir/loss_ir_schema.py 中的 LossIR 数据类定义'
@@ -216,6 +504,9 @@ def prepare_context(
     result = {
         'paper': paper_context,
         'primary_files': primary_files,
+        'code_inventory': code_inventory,
+        'evidence_graph': evidence_graph,
+        'evidence_graph_path': str(evidence_graph_path),
         'schema': schema_doc,
         'output_path': str(output_yaml_path),
         'formula_output_path': str(output_formula_path),

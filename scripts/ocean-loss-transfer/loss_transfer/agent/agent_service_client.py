@@ -27,15 +27,28 @@ except ImportError:
 
 
 def resolve_service_url(service_url: Optional[str] = None) -> str:
+    return resolve_service_descriptor(service_url)['resolved_url']
+
+
+def resolve_service_descriptor(service_url: Optional[str] = None) -> Dict[str, str]:
     if service_url and service_url.strip():
-        return service_url.rstrip('/')
+        return {
+            'resolved_url': service_url.rstrip('/'),
+            'source': 'explicit',
+        }
 
     env_url = os.getenv('KODE_API_URL')
     if env_url and env_url.strip():
-        return env_url.rstrip('/')
+        return {
+            'resolved_url': env_url.rstrip('/'),
+            'source': 'env',
+        }
 
     port = os.getenv('KODE_API_PORT', '8787').strip() or '8787'
-    return f'http://localhost:{port}'
+    return {
+        'resolved_url': f'http://localhost:{port}',
+        'source': 'default_localhost',
+    }
 
 
 def resolve_api_key(api_key: Optional[str] = None) -> str:
@@ -43,6 +56,54 @@ def resolve_api_key(api_key: Optional[str] = None) -> str:
     if not key:
         raise ValueError('Missing service API key. Set KODE_API_SECRET or pass api_key explicitly.')
     return key
+
+
+def fetch_service_health(
+    *,
+    service_url: Optional[str] = None,
+    timeout_sec: int = 2,
+) -> Dict[str, Any]:
+    descriptor = resolve_service_descriptor(service_url)
+    try:
+        response = requests.get(
+            descriptor['resolved_url'] + '/health',
+            timeout=timeout_sec,
+        )
+    except requests.RequestException as exc:
+        return {
+            'status': 'unavailable',
+            'resolved_url': descriptor['resolved_url'],
+            'error': str(exc),
+        }
+
+    if response.status_code != 200:
+        return {
+            'status': 'error',
+            'resolved_url': descriptor['resolved_url'],
+            'http_status': response.status_code,
+            'body': response.text[:500],
+        }
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return {
+            'status': 'error',
+            'resolved_url': descriptor['resolved_url'],
+            'error': f'Invalid health payload: {exc}',
+        }
+
+    if isinstance(payload, dict):
+        return {
+            'status': 'ok',
+            'resolved_url': descriptor['resolved_url'],
+            **payload,
+        }
+    return {
+        'status': 'error',
+        'resolved_url': descriptor['resolved_url'],
+        'error': 'Health payload was not a JSON object',
+    }
 
 
 def run_agent_chat(
@@ -59,7 +120,8 @@ def run_agent_chat(
     agent_id: Optional[str] = None,
     timeout_sec: int = 900,
 ) -> Dict[str, Any]:
-    url = resolve_service_url(service_url) + '/api/chat/stream'
+    service_descriptor = resolve_service_descriptor(service_url)
+    url = service_descriptor['resolved_url'] + '/api/chat/stream'
     headers = {
         'Content-Type': 'application/json',
         'X-API-Key': resolve_api_key(api_key),
@@ -84,6 +146,7 @@ def run_agent_chat(
     tool_results: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
     current_agent_id: Optional[str] = None
+    session_scope = 'reused_agent_session' if agent_id else 'new_request_session'
 
     try:
         response = requests.post(
@@ -100,6 +163,10 @@ def run_agent_chat(
             'events': [],
             'text': '',
             'agent_id': None,
+            'requested_agent_id': agent_id,
+            'session_scope': session_scope,
+            'service_url': service_descriptor['resolved_url'],
+            'service_url_source': service_descriptor['source'],
             'tool_calls': [],
             'tool_results': [],
         }
@@ -116,6 +183,10 @@ def run_agent_chat(
                 'events': [],
                 'text': '',
                 'agent_id': None,
+                'requested_agent_id': agent_id,
+                'session_scope': session_scope,
+                'service_url': service_descriptor['resolved_url'],
+                'service_url_source': service_descriptor['source'],
                 'tool_calls': [],
                 'tool_results': [],
             }
@@ -154,6 +225,10 @@ def run_agent_chat(
         'events': events,
         'text': ''.join(text_chunks),
         'agent_id': current_agent_id,
+        'requested_agent_id': agent_id,
+        'session_scope': session_scope,
+        'service_url': service_descriptor['resolved_url'],
+        'service_url_source': service_descriptor['source'],
         'tool_calls': tool_calls,
         'tool_results': tool_results,
         'errors': errors,
