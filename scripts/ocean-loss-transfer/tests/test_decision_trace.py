@@ -1,3 +1,16 @@
+"""
+@file test_decision_trace.py
+
+@description Regression tests for decision trace and case-memory export helpers.
+@author kongzhiquan
+@contributors kongzhiquan
+@date 2026-03-30
+@version 1.0.0
+
+@changelog
+  - 2026-03-30 kongzhiquan: v1.0.0 add case_memory.v2 export coverage
+"""
+
 from __future__ import annotations
 
 import json
@@ -50,6 +63,7 @@ class DecisionTraceTests(unittest.TestCase):
             'objective': 'Add a reconstruction anchor.',
             'files_to_edit': ['candidate_loss.py'],
             'required_edit_paths': ['sandbox_model_adapter.py'],
+            'evidence_refs': ['result.layer4'],
             'strategy_delta': {
                 'previous_attempt_id': 1,
                 'why_previous_failed': 'SSIM collapsed after the first transfer.',
@@ -87,6 +101,7 @@ class DecisionTraceTests(unittest.TestCase):
         self.assertEqual(record['state']['previous_stop_layer'], 'layer4')
         self.assertEqual(record['state']['previous_primary_metric'], 0.61)
         self.assertEqual(record['action']['strategy_delta']['expected_signal'], 'validation SSIM should improve')
+        self.assertEqual(record['action']['evidence_refs'], ['result.layer4'])
         self.assertEqual(record['reward']['stage_score'], 6)
 
     def test_build_decision_trace_record_prefers_effective_routing_audit(self) -> None:
@@ -151,6 +166,9 @@ class DecisionTraceTests(unittest.TestCase):
                     'attempt_id': 1,
                     'name': 'Attempt 1',
                     'kind': 'agent_code',
+                    'files_to_edit': ['candidate_loss.py'],
+                    'required_edit_paths': ['sandbox_model_adapter.py'],
+                    'evidence_refs': ['validator.layer4'],
                     'reward_summary': {'primary_metric_name': 'val_ssim', 'primary_metric': 0.61, 'stage_score': 5},
                     'status': 'failed',
                     'passed': False,
@@ -163,6 +181,9 @@ class DecisionTraceTests(unittest.TestCase):
                     'attempt_id': 2,
                     'name': 'Attempt 2',
                     'kind': 'agent_code',
+                    'files_to_edit': ['candidate_loss.py'],
+                    'required_edit_paths': ['sandbox_model_adapter.py'],
+                    'evidence_refs': ['result.layer4'],
                     'strategy_delta': {
                         'previous_attempt_id': 1,
                         'why_previous_failed': 'below threshold',
@@ -170,12 +191,32 @@ class DecisionTraceTests(unittest.TestCase):
                         'why_not_repeat_previous': 'the previous strategy underperformed',
                         'expected_signal': 'validation SSIM should increase',
                     },
-                    'reward_summary': {'primary_metric_name': 'val_ssim', 'primary_metric': 0.67, 'stage_score': 6},
+                    'reward_summary': {
+                        'primary_metric_name': 'val_ssim',
+                        'primary_metric': 0.67,
+                        'stage_score': 6,
+                        'repair_rounds_used': 1,
+                        'baseline_delta': 0.06,
+                    },
                     'status': 'passed',
                     'passed': True,
                     'stop_layer': None,
                     'error': None,
                     'metrics': {'val_ssim': 0.67},
+                    'baseline_delta': 0.06,
+                    'repair_rounds': [
+                        {
+                            'round': 1,
+                            'status': 'success',
+                            'post_stop_layer': None,
+                            'post_error': None,
+                            'repair': {
+                                'repair_plan_summary': {
+                                    'failure_hypothesis': 'stabilize the objective',
+                                }
+                            },
+                        }
+                    ],
                     'paths': {'attempt_dir': str(experiment_dir / 'attempt_2')},
                 },
             ]
@@ -225,6 +266,10 @@ class DecisionTraceTests(unittest.TestCase):
             self.assertEqual(rl_records[1]['reward']['stage_score'], 6)
             self.assertEqual(case_records[1]['stop_layer'], None)
             self.assertEqual(case_records[1]['integration_path'], 'loss_only')
+            self.assertEqual(case_records[1]['schema_version'], 'case_memory.v2')
+            self.assertEqual(case_records[1]['required_edit_paths'], ['sandbox_model_adapter.py'])
+            self.assertEqual(case_records[1]['failure_signature']['error_family'], None)
+            self.assertTrue(case_records[1]['repair_outcome']['effective'])
 
     def test_build_rl_decision_dataset_record_keeps_controller_features(self) -> None:
         trace_record = {

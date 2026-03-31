@@ -1,3 +1,16 @@
+"""
+@file test_attempt_state.py
+
+@description Regression tests for attempt result and repair bookkeeping helpers.
+@author kongzhiquan
+@contributors kongzhiquan
+@date 2026-03-30
+@version 1.0.0
+
+@changelog
+  - 2026-03-30 kongzhiquan: v1.0.0 add coverage for persisted edit scope and evidence refs
+"""
+
 from __future__ import annotations
 
 import sys
@@ -38,7 +51,13 @@ class AttemptStateTests(unittest.TestCase):
             code_path = attempt_dir / 'candidate_loss.py'
             result = build_code_generation_failure_result(
                 attempt_id=3,
-                attempt_spec={'name': 'Attempt 3', 'notes': 'test'},
+                attempt_spec={
+                    'name': 'Attempt 3',
+                    'notes': 'test',
+                    'files_to_edit': ['candidate_loss.py'],
+                    'required_edit_paths': ['sandbox_model_adapter.py'],
+                    'evidence_refs': ['validator.layer3'],
+                },
                 attempt_dir=attempt_dir,
                 code_path=code_path,
                 baseline={'model': 'swinir'},
@@ -50,6 +69,9 @@ class AttemptStateTests(unittest.TestCase):
         self.assertEqual(result['stop_layer'], 'code_generation')
         self.assertEqual(result['reward_summary']['primary_metric'], None)
         self.assertEqual(result['metadata']['notes'], 'test')
+        self.assertEqual(result['files_to_edit'], ['candidate_loss.py'])
+        self.assertEqual(result['required_edit_paths'], ['sandbox_model_adapter.py'])
+        self.assertEqual(result['evidence_refs'], ['validator.layer3'])
 
     def test_repair_record_and_reversion_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -84,7 +106,13 @@ class AttemptStateTests(unittest.TestCase):
             code_path = attempt_dir / 'candidate_loss.py'
             result = build_attempt_result(
                 attempt_id=7,
-                attempt_spec={'name': 'Attempt 7', 'notes': 'ok'},
+                attempt_spec={
+                    'name': 'Attempt 7',
+                    'notes': 'ok',
+                    'files_to_edit': ['candidate_loss.py'],
+                    'required_edit_paths': ['sandbox_model_adapter.py'],
+                    'evidence_refs': ['result.layer4'],
+                },
                 source_kind='agent_code',
                 attempt_dir=attempt_dir,
                 code_path=code_path,
@@ -109,6 +137,9 @@ class AttemptStateTests(unittest.TestCase):
 
         self.assertEqual(result['status'], 'passed')
         self.assertTrue(result['passed_formula_alignment'])
+        self.assertEqual(result['files_to_edit'], ['candidate_loss.py'])
+        self.assertEqual(result['required_edit_paths'], ['sandbox_model_adapter.py'])
+        self.assertEqual(result['evidence_refs'], ['result.layer4'])
         self.assertEqual(
             result['reward_summary'],
             build_reward_summary(

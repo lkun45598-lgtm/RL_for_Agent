@@ -1,8 +1,15 @@
 """
 @file attempt_state.py
+
 @description Pure helpers for repair-record bookkeeping and final attempt result assembly.
 @author OpenAI Codex
+@contributors kongzhiquan
 @date 2026-03-26
+@version 1.2.0
+
+@changelog
+  - 2026-03-26 OpenAI Codex: v1.0.0 initial version
+  - 2026-03-30 kongzhiquan: v1.2.0 persist edit scope and evidence refs into final attempt results for case-memory v2
 """
 
 from __future__ import annotations
@@ -20,6 +27,19 @@ _STAGE_SCORE = {
     'layer4': 5,
     None: 6,
 }
+
+
+def _as_string_list(value: Any) -> List[str]:
+    items = value if isinstance(value, list) else []
+    normalized: List[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        candidate = item.strip()
+        if not candidate or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return normalized
 
 
 def layer_rank(stop_layer: Optional[str], layer_order: Dict[Optional[str], int]) -> int:
@@ -44,6 +64,9 @@ def build_code_generation_failure_result(
         'attempt_id': attempt_id,
         'name': attempt_spec.get('name', f'attempt_{attempt_id}'),
         'kind': str(attempt_spec.get('kind', 'agent_code')),
+        'files_to_edit': _as_string_list(attempt_spec.get('files_to_edit')),
+        'required_edit_paths': _as_string_list(attempt_spec.get('required_edit_paths')),
+        'evidence_refs': _as_string_list(attempt_spec.get('evidence_refs')),
         'status': 'failed',
         'passed': False,
         'run_training': bool(attempt_spec.get('run_training', True)),
@@ -249,6 +272,9 @@ def build_attempt_result(
         'attempt_id': attempt_id,
         'name': attempt_spec.get('name', f'attempt_{attempt_id}'),
         'kind': source_kind,
+        'files_to_edit': _as_string_list(attempt_spec.get('files_to_edit')),
+        'required_edit_paths': _as_string_list(attempt_spec.get('required_edit_paths')),
+        'evidence_refs': _as_string_list(attempt_spec.get('evidence_refs')),
         'status': 'passed' if passed else 'failed',
         'passed': passed,
         'run_training': run_training,

@@ -1,15 +1,17 @@
 """
 @file decision_trace.py
+
 @description Build RL-friendly decision-trace samples from executed loss-transfer attempts.
 @author OpenAI Codex
 @contributors kongzhiquan
 @date 2026-03-26
-@version 1.2.0
+@version 1.3.0
 
 @changelog
   - 2026-03-26 OpenAI Codex: v1.0.0 initial version
   - 2026-03-28 kongzhiquan: v1.1.0 reuse shared case-memory store for persistence
   - 2026-03-28 kongzhiquan: v1.2.0 merge routing-audit provenance with shared case-memory export
+  - 2026-03-30 kongzhiquan: v1.3.0 export case_memory.v2 records with richer failure and repair summaries
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 from loss_transfer.memory.case_memory_store import (
     DEFAULT_CASE_MEMORY_PATH,
+    build_failure_signature,
+    build_repair_outcome_summary,
     merge_case_memory_records,
 )
 
@@ -46,6 +50,19 @@ def _latest_repair_round(attempt: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def _normalize_string_list(value: Any) -> List[str]:
+    items = value if isinstance(value, list) else []
+    normalized: List[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        candidate = item.strip()
+        if not candidate or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return normalized
+
+
 def build_case_memory_record(
     *,
     trace_record: Dict[str, Any],
@@ -57,11 +74,22 @@ def build_case_memory_record(
     outcome = _safe_dict(trace_record.get('outcome'))
     provenance = _safe_dict(trace_record.get('provenance'))
     latest_repair_round = _latest_repair_round(attempt)
+    failure_feedback = _safe_dict(latest_repair_round.get('failure_feedback'))
     repair_payload = _safe_dict(latest_repair_round.get('repair'))
     repair_plan_summary = _safe_dict(repair_payload.get('repair_plan_summary'))
+    metrics = _safe_dict(outcome.get('metrics'))
+    repair_rounds = _safe_list(attempt.get('repair_rounds'))
+    reverted_repair_rounds = sum(
+        1
+        for round_info in repair_rounds
+        if isinstance(round_info, dict) and bool(round_info.get('reverted', False))
+    )
+    trigger_stop_layer = latest_repair_round.get('trigger_stop_layer') or outcome.get('stop_layer')
+    trigger_error = failure_feedback.get('error') or outcome.get('error')
+    trigger_metrics = _safe_dict(failure_feedback.get('metrics')) or metrics
 
     return {
-        'schema_version': 'case_memory.v1',
+        'schema_version': 'case_memory.v2',
         'paper_slug': trace_record.get('paper_slug'),
         'attempt_id': trace_record.get('attempt_id'),
         'integration_path': state.get('integration_path'),
@@ -69,16 +97,46 @@ def build_case_memory_record(
         'name': action.get('name'),
         'objective': action.get('objective'),
         'strategy_delta': _safe_dict(action.get('strategy_delta')),
+        'files_to_edit': _normalize_string_list(action.get('files_to_edit')),
+        'required_edit_paths': _normalize_string_list(action.get('required_edit_paths')),
+        'evidence_refs': _normalize_string_list(action.get('evidence_refs')),
         'stop_layer': outcome.get('stop_layer'),
         'error': outcome.get('error'),
+        'trigger_stop_layer': trigger_stop_layer,
+        'trigger_error': trigger_error,
         'passed': outcome.get('passed'),
         'primary_metric_name': reward.get('primary_metric_name'),
         'primary_metric': reward.get('primary_metric'),
         'stage_score': reward.get('stage_score'),
         'repair_rounds_used': reward.get('repair_rounds_used'),
+        'baseline_delta': reward.get('baseline_delta'),
+        'val_ssim': reward.get('val_ssim'),
+        'val_psnr': reward.get('val_psnr'),
+        'training_curve_trend': reward.get('training_curve_trend'),
+        'training_curve_last_epoch': reward.get('training_curve_last_epoch'),
+        'reverted_repair_rounds': reverted_repair_rounds,
+        'requires_model_changes': state.get('requires_model_changes'),
+        'loss_only_pipeline_viable': state.get('loss_only_pipeline_viable'),
+        'formula_requires_model_changes': state.get('formula_requires_model_changes'),
+        'metrics': metrics,
         'repair_hypothesis': repair_plan_summary.get('failure_hypothesis'),
         'post_stop_layer': latest_repair_round.get('post_stop_layer'),
         'post_error': latest_repair_round.get('post_error'),
+        'failure_signature': build_failure_signature(
+            stop_layer=trigger_stop_layer,
+            error=trigger_error,
+            metrics=trigger_metrics,
+        ),
+        'repair_outcome': build_repair_outcome_summary(
+            stop_layer=trigger_stop_layer,
+            post_stop_layer=latest_repair_round.get('post_stop_layer'),
+            post_error=latest_repair_round.get('post_error'),
+            passed=outcome.get('passed'),
+            repair_rounds_used=reward.get('repair_rounds_used'),
+            baseline_delta=reward.get('baseline_delta'),
+            reverted=reverted_repair_rounds > 0,
+            status=latest_repair_round.get('status'),
+        ),
         'provenance': {
             'result_path': provenance.get('result_path'),
             'analysis_plan_path': provenance.get('analysis_plan_path'),
@@ -135,6 +193,7 @@ def build_decision_trace_record(
             'run_training': attempt.get('run_training'),
             'files_to_edit': _safe_list(attempt.get('files_to_edit')),
             'required_edit_paths': _safe_list(attempt.get('required_edit_paths')),
+            'evidence_refs': _safe_list(attempt.get('evidence_refs')),
             'strategy_delta': strategy_delta,
         },
         'reward': reward_summary,

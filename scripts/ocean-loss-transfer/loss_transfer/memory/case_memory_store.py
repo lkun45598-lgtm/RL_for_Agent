@@ -1,12 +1,15 @@
 """
 @file case_memory_store.py
+
 @description Shared case-memory persistence and compatibility helpers for historical experience records.
 @author kongzhiquan
+@contributors kongzhiquan
 @date 2026-03-28
-@version 1.0.0
+@version 1.1.0
 
 @changelog
   - 2026-03-28 kongzhiquan: v1.0.0 extract shared case-memory storage and innovation compatibility helpers
+  - 2026-03-30 kongzhiquan: v1.1.0 add case_memory.v2 normalization helpers and richer failure/repair summaries
 """
 
 from __future__ import annotations
@@ -21,8 +24,30 @@ from loss_transfer.common.paths import PROJECT_ROOT
 
 
 DEFAULT_CASE_MEMORY_PATH = PROJECT_ROOT / 'workflow' / 'loss_transfer' / 'knowledge_base' / 'case_memories.jsonl'
-_DEFAULT_SCHEMA_VERSION = 'case_memory.v1'
+_DEFAULT_SCHEMA_VERSION = 'case_memory.v2'
+_LEGACY_SCHEMA_VERSION = 'case_memory.v1'
 _KNOWLEDGE_RESULT_PATH_RE = re.compile(r'^knowledge_db:(?P<identifier>inn_(?P<number>\d+))$')
+_LAYER_RANKS: Dict[Any, int] = {
+    'code_generation': 0,
+    'formula_interface': 0,
+    'layer1': 1,
+    'layer2': 2,
+    'formula_alignment': 3,
+    'layer3': 4,
+    'layer4': 5,
+    None: 6,
+}
+_ERROR_FAMILY_PATTERNS: Sequence[tuple[str, Sequence[str]]] = (
+    ('oom', ('cuda out of memory', 'out of memory', ' oom')),
+    ('timeout', ('timeout', 'timed out')),
+    ('nan', (' nan', 'nan ', 'not a number')),
+    ('shape_mismatch', ('shape mismatch', 'size mismatch', 'dimension mismatch')),
+    ('missing_input', ('loss_inputs missing', 'required positional argument', 'unexpected keyword')),
+    ('syntax_error', ('syntaxerror', 'syntax error', 'indentationerror', 'indentation error')),
+    ('formula_alignment', ('formula alignment', 'symbol map', 'symbol mismatch')),
+    ('ssim_collapse', ('ssim collapse', 'ssim collapsed', 'ssim too low', 'below threshold', 'below_baseline', 'model_collapse')),
+    ('parse_failed', ('parse_failed', 'parse failed')),
+)
 
 
 def safe_dict(value: Any) -> Dict[str, Any]:
@@ -31,6 +56,188 @@ def safe_dict(value: Any) -> Dict[str, Any]:
 
 def safe_list(value: Any) -> List[Any]:
     return list(value) if isinstance(value, list) else []
+
+
+def normalize_string_list(value: Any) -> List[str]:
+    items = value if isinstance(value, list) else []
+    normalized: List[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        candidate = item.strip()
+        if not candidate or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return normalized
+
+
+def layer_rank(stop_layer: Any) -> int:
+    return _LAYER_RANKS.get(stop_layer, -1)
+
+
+def _safe_optional_str(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    return candidate or None
+
+
+def _coerce_optional_float(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_primary_metric(metrics: Any) -> tuple[Optional[str], Optional[float]]:
+    payload = safe_dict(metrics)
+    for key in ('swinir', 'val_ssim', 'val_psnr'):
+        value = payload.get(key)
+        if isinstance(value, (int, float)):
+            return key, float(value)
+    return None, None
+
+
+def infer_error_family(error_text: Any, stop_layer: Any = None) -> Optional[str]:
+    text = _safe_optional_str(error_text)
+    lowered = f' {text.lower()} ' if text else ''
+    if stop_layer == 'formula_alignment':
+        return 'formula_alignment'
+    if not lowered:
+        return 'other' if stop_layer is not None else None
+
+    for family, patterns in _ERROR_FAMILY_PATTERNS:
+        if any(pattern in lowered for pattern in patterns):
+            return family
+
+    if stop_layer == 'layer4' and 'ssim' in lowered:
+        return 'ssim_collapse'
+    if 'parse' in lowered:
+        return 'parse_failed'
+    return 'other'
+
+
+def build_failure_signature(
+    *,
+    stop_layer: Any,
+    error: Any,
+    metrics: Any = None,
+) -> Dict[str, Any]:
+    metric_name, metric_value = _extract_primary_metric(metrics)
+    return {
+        'stop_layer': stop_layer,
+        'error_family': infer_error_family(error, stop_layer),
+        'error_excerpt': _safe_optional_str(error),
+        'metric_name': metric_name,
+        'metric_value': metric_value,
+    }
+
+
+def build_repair_outcome_summary(
+    *,
+    stop_layer: Any,
+    post_stop_layer: Any,
+    post_error: Any,
+    passed: Any,
+    repair_rounds_used: Any,
+    baseline_delta: Any,
+    reverted: Any = False,
+    status: Any = None,
+) -> Dict[str, Any]:
+    repair_rounds_used_value = int(repair_rounds_used) if isinstance(repair_rounds_used, int) else 0
+    reverted_value = bool(reverted)
+    initial_rank = layer_rank(stop_layer)
+    post_rank = layer_rank(post_stop_layer)
+    positive_baseline_delta = isinstance(baseline_delta, (int, float)) and float(baseline_delta) > 0
+    improved = False
+    if repair_rounds_used_value > 0 and not reverted_value:
+        if passed is True:
+            improved = True
+        elif initial_rank >= 0 and post_rank >= 0 and post_rank > initial_rank:
+            improved = True
+
+    return {
+        'status': _safe_optional_str(status),
+        'post_stop_layer': post_stop_layer,
+        'post_error': _safe_optional_str(post_error),
+        'reverted': reverted_value,
+        'improved': improved,
+        'effective': bool(not reverted_value and (improved or positive_baseline_delta)),
+        'resolved_failure': bool(not reverted_value and (passed is True or improved)),
+        'positive_baseline_delta': positive_baseline_delta,
+    }
+
+
+def _overlay_non_none(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if value is None:
+            continue
+        merged[key] = value
+    return merged
+
+
+def _normalize_case_memory_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    strategy_delta = safe_dict(payload.get('strategy_delta'))
+    metrics = safe_dict(payload.get('metrics'))
+    baseline_delta = _coerce_optional_float(payload.get('baseline_delta'))
+    val_ssim = _coerce_optional_float(payload.get('val_ssim'))
+    val_psnr = _coerce_optional_float(payload.get('val_psnr'))
+    training_curve_last_epoch = _coerce_optional_float(payload.get('training_curve_last_epoch'))
+    reverted_repair_rounds = payload.get('reverted_repair_rounds')
+    reverted_repair_rounds_value = int(reverted_repair_rounds) if isinstance(reverted_repair_rounds, int) else 0
+    repair_rounds_used = payload.get('repair_rounds_used')
+    repair_rounds_used_value = int(repair_rounds_used) if isinstance(repair_rounds_used, int) else 0
+    trigger_stop_layer = payload.get('trigger_stop_layer') or payload.get('stop_layer')
+    trigger_error = payload.get('trigger_error') or payload.get('error')
+    repair_outcome_payload = safe_dict(payload.get('repair_outcome'))
+    reverted_flag = reverted_repair_rounds_value > 0 or bool(repair_outcome_payload.get('reverted'))
+    default_failure_signature = build_failure_signature(
+        stop_layer=trigger_stop_layer,
+        error=trigger_error,
+        metrics=metrics,
+    )
+    failure_signature = _overlay_non_none(
+        default_failure_signature,
+        safe_dict(payload.get('failure_signature')),
+    )
+    default_repair_outcome = build_repair_outcome_summary(
+        stop_layer=trigger_stop_layer,
+        post_stop_layer=payload.get('post_stop_layer'),
+        post_error=payload.get('post_error'),
+        passed=payload.get('passed'),
+        repair_rounds_used=repair_rounds_used_value,
+        baseline_delta=baseline_delta,
+        reverted=reverted_flag,
+        status=repair_outcome_payload.get('status'),
+    )
+    repair_outcome = _overlay_non_none(
+        default_repair_outcome,
+        repair_outcome_payload,
+    )
+
+    normalized = dict(payload)
+    normalized['schema_version'] = _DEFAULT_SCHEMA_VERSION
+    normalized['strategy_delta'] = strategy_delta
+    normalized['files_to_edit'] = normalize_string_list(payload.get('files_to_edit'))
+    normalized['required_edit_paths'] = normalize_string_list(payload.get('required_edit_paths'))
+    normalized['evidence_refs'] = normalize_string_list(payload.get('evidence_refs'))
+    normalized['trigger_stop_layer'] = trigger_stop_layer
+    normalized['trigger_error'] = _safe_optional_str(trigger_error)
+    normalized['baseline_delta'] = baseline_delta
+    normalized['val_ssim'] = val_ssim
+    normalized['val_psnr'] = val_psnr
+    normalized['training_curve_trend'] = _safe_optional_str(payload.get('training_curve_trend'))
+    normalized['training_curve_last_epoch'] = training_curve_last_epoch
+    normalized['reverted_repair_rounds'] = reverted_repair_rounds_value
+    normalized['requires_model_changes'] = payload.get('requires_model_changes')
+    normalized['loss_only_pipeline_viable'] = payload.get('loss_only_pipeline_viable')
+    normalized['formula_requires_model_changes'] = payload.get('formula_requires_model_changes')
+    normalized['metrics'] = metrics
+    normalized['tags'] = _normalize_tags(safe_list(payload.get('tags')))
+    normalized['failure_signature'] = failure_signature
+    normalized['repair_outcome'] = repair_outcome
+    normalized['provenance'] = safe_dict(payload.get('provenance'))
+    return normalized
 
 
 def read_jsonl_dicts(path: Path) -> List[Dict[str, Any]]:
@@ -53,9 +260,10 @@ def read_jsonl_dicts(path: Path) -> List[Dict[str, Any]]:
 def normalize_case_memory_record(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     schema_version = payload.get('schema_version')
     if schema_version == _DEFAULT_SCHEMA_VERSION:
-        normalized = dict(payload)
-        normalized.setdefault('schema_version', _DEFAULT_SCHEMA_VERSION)
-        return normalized
+        return _normalize_case_memory_payload(payload)
+
+    if schema_version == _LEGACY_SCHEMA_VERSION:
+        return _normalize_case_memory_payload(payload)
 
     if schema_version != 'decision_trace.v1':
         return None
@@ -65,8 +273,8 @@ def normalize_case_memory_record(payload: Dict[str, Any]) -> Optional[Dict[str, 
     reward = safe_dict(payload.get('reward'))
     outcome = safe_dict(payload.get('outcome'))
 
-    return {
-        'schema_version': _DEFAULT_SCHEMA_VERSION,
+    return _normalize_case_memory_payload(
+        {
         'paper_slug': payload.get('paper_slug'),
         'attempt_id': payload.get('attempt_id'),
         'integration_path': state.get('integration_path'),
@@ -74,6 +282,9 @@ def normalize_case_memory_record(payload: Dict[str, Any]) -> Optional[Dict[str, 
         'name': action.get('name'),
         'objective': action.get('objective'),
         'strategy_delta': safe_dict(action.get('strategy_delta')),
+        'files_to_edit': normalize_string_list(action.get('files_to_edit')),
+        'required_edit_paths': normalize_string_list(action.get('required_edit_paths')),
+        'evidence_refs': normalize_string_list(action.get('evidence_refs')),
         'stop_layer': outcome.get('stop_layer'),
         'error': outcome.get('error'),
         'passed': outcome.get('passed'),
@@ -81,8 +292,19 @@ def normalize_case_memory_record(payload: Dict[str, Any]) -> Optional[Dict[str, 
         'primary_metric': reward.get('primary_metric'),
         'stage_score': reward.get('stage_score'),
         'repair_rounds_used': reward.get('repair_rounds_used'),
+        'baseline_delta': reward.get('baseline_delta'),
+        'val_ssim': reward.get('val_ssim'),
+        'val_psnr': reward.get('val_psnr'),
+        'training_curve_trend': reward.get('training_curve_trend'),
+        'training_curve_last_epoch': reward.get('training_curve_last_epoch'),
+        'reverted_repair_rounds': reward.get('reverted_repair_rounds'),
+        'requires_model_changes': state.get('requires_model_changes'),
+        'loss_only_pipeline_viable': state.get('loss_only_pipeline_viable'),
+        'formula_requires_model_changes': state.get('formula_requires_model_changes'),
+        'metrics': safe_dict(outcome.get('metrics')),
         'provenance': safe_dict(payload.get('provenance')),
-    }
+        }
+    )
 
 
 def list_case_memory_sources(
@@ -317,7 +539,8 @@ def innovation_to_case_memory_record(
     confidence = min(max(_coerce_float(innovation.get('confidence')), 0.0), 1.0)
     evidence = safe_dict(innovation.get('evidence'))
 
-    return {
+    return _normalize_case_memory_payload(
+        {
         'schema_version': _DEFAULT_SCHEMA_VERSION,
         'paper_slug': str(innovation.get('paper') or 'unknown-paper'),
         'attempt_id': innovation_id,
@@ -348,10 +571,21 @@ def innovation_to_case_memory_record(
             'baseline_ssim': _coerce_float(evidence.get('baseline_ssim')),
             'new_ssim': _coerce_float(evidence.get('new_ssim'), default=improvement),
         },
+        'files_to_edit': [],
+        'required_edit_paths': [],
+        'evidence_refs': [],
+        'baseline_delta': None,
+        'val_ssim': None,
+        'val_psnr': None,
+        'training_curve_trend': None,
+        'training_curve_last_epoch': None,
+        'reverted_repair_rounds': 0,
+        'metrics': {},
         'provenance': {
             'result_path': f'knowledge_db:{innovation_id}',
         },
-    }
+        }
+    )
 
 
 def add_innovation_to_case_memory(
